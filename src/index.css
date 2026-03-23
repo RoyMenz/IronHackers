@@ -1,0 +1,47 @@
+:root {
+  --text: #334155;
+  --text-strong: #0f172a;
+  --text-soft: #64748b;
+  --bg: #eef2ff;
+  --accent: #4f46e5;
+  --border: rgba(148, 163, 184, 0.2);
+  --sans: 'Inter', 'Segoe UI', sans-serif;
+  --heading: 'Manrope', 'Segoe UI', sans-serif;
+
+  font: 16px/1.5 var(--sans);
+  letter-spacing: 0.01em;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  font-family: var(--sans);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(238, 242, 255, 0.96)),
+    #eef2ff;
+}
+
+h1,
+h2 {
+  font-family: var(--heading);
+  color: var(--text-strong);
+}
+
+p {
+  margin: 0;
+}
