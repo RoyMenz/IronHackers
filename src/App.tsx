@@ -32,12 +32,26 @@ const recentDocuments: DocumentItem[] = [
 ]
 
 const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
+const authLanguages = ['English', 'Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
 
 function App() {
+  const [pathname, setPathname] = useState(() => window.location.pathname)
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const [selectedLanguage, setSelectedLanguage] = useState(outputLanguages[0])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const fileInputId = useId()
+
+  useEffect(() => {
+    function handlePopState() {
+      setPathname(window.location.pathname)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+    }
+  }, [])
 
   useEffect(() => {
     if (!isUploadOpen) return
@@ -61,6 +75,95 @@ function App() {
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const nextFile = event.target.files?.[0] ?? null
     setSelectedFile(nextFile)
+  }
+
+  function navigateTo(nextPath: '/' | '/signin' | '/signup' | '/dashboard') {
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath)
+    }
+
+    setPathname(nextPath)
+    setIsUploadOpen(false)
+  }
+
+  if (pathname === '/') {
+    return (
+      <div className="gateway-shell">
+        <header className="gateway-nav">
+          <div className="gateway-brand">
+            <p>LabLingo</p>
+            <span />
+          </div>
+        </header>
+
+        <main className="gateway-main">
+          <div className="gateway-orb gateway-orb--left" aria-hidden="true" />
+          <div className="gateway-orb gateway-orb--right" aria-hidden="true" />
+
+          <section className="gateway-hero">
+            <p className="gateway-hero__eyebrow">Precision Linguistic Intelligence</p>
+            <h1>High-fidelity analysis begins here.</h1>
+            <p className="gateway-hero__text">
+              Access the ecosystem of scientific precision and linguistic mastery.
+            </p>
+
+            <div className="gateway-actions">
+              <button
+                className="gateway-button gateway-button--primary"
+                type="button"
+                onClick={() => navigateTo('/signin')}
+              >
+                Sign In
+                <LoginIcon />
+              </button>
+              <button
+                className="gateway-button gateway-button--secondary"
+                type="button"
+                onClick={() => navigateTo('/signup')}
+              >
+                Create Account
+                <ArrowRightIcon />
+              </button>
+            </div>
+          </section>
+        </main>
+
+        <footer className="gateway-footer">
+          <p>© 2024 LabLingo Precision Systems</p>
+          <div>
+            <button type="button">Privacy</button>
+            <button type="button">Terms</button>
+            <button type="button">Security</button>
+          </div>
+        </footer>
+      </div>
+    )
+  }
+
+  if (pathname === '/signin') {
+    return (
+      <AuthShell
+        actionLabel="Sign In"
+        eyebrow="Welcome Back"
+        helperText="Enter your organization credentials to continue into the LabLingo workspace."
+        title="Sign in to your workspace."
+        footerPrompt="Don't have an account?"
+        footerAction="Create one"
+        onFooterAction={() => navigateTo('/signup')}
+        onSubmit={() => navigateTo('/dashboard')}
+      >
+        <AuthField label="Organization email">
+          <input type="email" placeholder="name@organization.com" />
+        </AuthField>
+        <AuthField label="Password">
+          <input type="password" placeholder="Enter your password" />
+        </AuthField>
+      </AuthShell>
+    )
+  }
+
+  if (pathname === '/signup') {
+    return <SignUpPage onComplete={() => navigateTo('/dashboard')} onSignIn={() => navigateTo('/signin')} />
   }
 
   return (
@@ -268,6 +371,176 @@ function App() {
   )
 }
 
+function AuthShell({
+  actionLabel,
+  children,
+  eyebrow,
+  footerAction,
+  footerPrompt,
+  helperText,
+  onFooterAction,
+  onSubmit,
+  title,
+}: {
+  actionLabel: string
+  children: ReactNode
+  eyebrow: string
+  footerAction: string
+  footerPrompt: string
+  helperText: string
+  onFooterAction: () => void
+  onSubmit: () => void
+  title: string
+}) {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSubmit()
+  }
+
+  return (
+    <div className="gateway-shell">
+      <header className="gateway-nav">
+        <div className="gateway-brand">
+          <p>LabLingo</p>
+          <span />
+        </div>
+      </header>
+
+      <main className="gateway-main">
+        <div className="gateway-orb gateway-orb--left" aria-hidden="true" />
+        <div className="gateway-orb gateway-orb--right" aria-hidden="true" />
+
+        <section className="auth-panel">
+          <div className="auth-panel__intro">
+            <p className="gateway-hero__eyebrow">{eyebrow}</p>
+            <h1>{title}</h1>
+            <p>{helperText}</p>
+          </div>
+
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {children}
+            <button className="gateway-button gateway-button--primary auth-submit" type="submit">
+              {actionLabel}
+              <ArrowRightIcon />
+            </button>
+          </form>
+
+          <div className="auth-panel__footer">
+            <span>{footerPrompt}</span>
+            <button type="button" onClick={onFooterAction}>
+              {footerAction}
+            </button>
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function AuthField({
+  children,
+  label,
+}: {
+  children: ReactNode
+  label: string
+}) {
+  return (
+    <label className="auth-field">
+      <span>{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function SignUpPage({
+  onComplete,
+  onSignIn,
+}: {
+  onComplete: () => void
+  onSignIn: () => void
+}) {
+  const [selectedKnownLanguage, setSelectedKnownLanguage] = useState('')
+  const [knownLanguages, setKnownLanguages] = useState<string[]>([])
+
+  function addKnownLanguage(language: string) {
+    if (!language || knownLanguages.includes(language)) return
+    setKnownLanguages((current) => [...current, language])
+  }
+
+  function removeKnownLanguage(language: string) {
+    setKnownLanguages((current) => current.filter((item) => item !== language))
+  }
+
+  return (
+    <AuthShell
+      actionLabel="Create an account"
+      eyebrow="Get Started"
+      helperText="Set up your LabLingo access with your organization details and preferred language."
+      title="Create your account."
+      footerPrompt="Already have an account?"
+      footerAction="Sign in"
+      onFooterAction={onSignIn}
+      onSubmit={onComplete}
+    >
+      <AuthField label="Name (First and Last)">
+        <input type="text" placeholder="Asha Patel" />
+      </AuthField>
+      <AuthField label="Organization email">
+        <input type="email" placeholder="asha@organization.com" />
+      </AuthField>
+      <AuthField label="Password">
+        <input type="password" placeholder="Create a password" />
+      </AuthField>
+      <AuthField label="Enter password again">
+        <input type="password" placeholder="Re-enter your password" />
+      </AuthField>
+      <AuthField label="Languages known">
+        <div className="auth-multi-select">
+          <div className="auth-select">
+            <select
+              value={selectedKnownLanguage}
+              onChange={(event) => {
+                const nextLanguage = event.target.value
+                setSelectedKnownLanguage(nextLanguage)
+                addKnownLanguage(nextLanguage)
+                setSelectedKnownLanguage('')
+              }}
+            >
+              <option value="">Select a language</option>
+              {authLanguages
+                .filter((language) => !knownLanguages.includes(language))
+                .map((language) => (
+                  <option key={language} value={language}>
+                    {language}
+                  </option>
+                ))}
+            </select>
+            <ChevronDownIcon />
+          </div>
+
+          {knownLanguages.length ? (
+            <div className="auth-tags">
+              {knownLanguages.map((language) => (
+                <button
+                  key={language}
+                  className="auth-tag"
+                  type="button"
+                  onClick={() => removeKnownLanguage(language)}
+                >
+                  <span>{language}</span>
+                  <CloseIcon />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="auth-tags__hint">Selected languages will appear here as tags.</p>
+          )}
+        </div>
+      </AuthField>
+    </AuthShell>
+  )
+}
+
 function DocumentIcon({ kind }: { kind: DocumentItem['kind'] }) {
   if (kind === 'markdown') return <MarkdownIcon />
   if (kind === 'compliance') return <ShieldIcon />
@@ -360,6 +633,41 @@ function CloseIcon() {
         d="m7 7 10 10M17 7 7 17"
         stroke="currentColor"
         strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function LoginIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M14 6h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M10 16 14 12 10 8M14 12H4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function ArrowRightIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M5 12h14M13 7l5 5-5 5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         strokeWidth="1.8"
       />
     </SvgIcon>
