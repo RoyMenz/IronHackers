@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useId, useState, type ChangeEvent, type ReactNode } from 'react'
 import './App.css'
 
 type DocumentItem = {
@@ -31,7 +31,38 @@ const recentDocuments: DocumentItem[] = [
   },
 ]
 
+const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
+
 function App() {
+  const [isUploadOpen, setIsUploadOpen] = useState(false)
+  const [selectedLanguage, setSelectedLanguage] = useState(outputLanguages[0])
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const fileInputId = useId()
+
+  useEffect(() => {
+    if (!isUploadOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isUploadOpen])
+
+  function openUploadModal() {
+    setIsUploadOpen(true)
+  }
+
+  function closeUploadModal() {
+    setIsUploadOpen(false)
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.target.files?.[0] ?? null
+    setSelectedFile(nextFile)
+  }
+
   return (
     <div className="dashboard-shell">
       <header className="topbar">
@@ -81,15 +112,6 @@ function App() {
           </p>
         </section>
 
-        <section className="greeting-strip">
-          <p className="eyebrow">Today&apos;s overview</p>
-          <h2>Good morning, Sarah</h2>
-          <p className="greeting-strip__text">
-            Three translation jobs are ready for review, and your regional
-            language delivery pipeline is up 42% this week.
-          </p>
-        </section>
-
         <section className="overview-grid" aria-label="Overview">
           <article className="upload-panel">
             <div className="upload-panel__icon">
@@ -100,7 +122,7 @@ function App() {
               Upload technical lab documentation, SOPs, and manuals to translate
               them into local languages for clearer field-level understanding.
             </p>
-            <button className="ghost-button" type="button">
+            <button className="ghost-button" type="button" onClick={openUploadModal}>
               Upload Files
             </button>
           </article>
@@ -155,6 +177,93 @@ function App() {
         </section>
 
       </main>
+
+      {isUploadOpen ? (
+        <div
+          className="upload-modal-backdrop"
+          role="presentation"
+          onClick={closeUploadModal}
+        >
+          <section
+            className="upload-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="upload-modal__header">
+              <div>
+                <p className="upload-modal__eyebrow">New Translation</p>
+                <h2 id="upload-modal-title">Upload document</h2>
+              </div>
+
+              <button
+                className="upload-modal__close"
+                type="button"
+                aria-label="Close upload dialog"
+                onClick={closeUploadModal}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="upload-modal__body">
+              <label className="dropzone" htmlFor={fileInputId}>
+                <input
+                  id={fileInputId}
+                  className="dropzone__input"
+                  type="file"
+                  accept=".pdf,.doc,.docx,.md,.markdown"
+                  onChange={handleFileChange}
+                />
+                <div className="dropzone__icon">
+                  <UploadIcon />
+                </div>
+                <p className="dropzone__title">Drag and drop your file or browse</p>
+                <p className="dropzone__subtitle">Supported formats: PDF, DOCX, Markdown</p>
+                <p className="dropzone__caption">
+                  Best for SOPs, manuals, reagent instructions, and process notes
+                </p>
+              </label>
+
+              <div className="upload-modal__settings">
+                <p className="upload-modal__label">Choose output language</p>
+
+                <label className="language-select" aria-label="Choose output language">
+                  <select
+                    value={selectedLanguage}
+                    onChange={(event) => setSelectedLanguage(event.target.value)}
+                  >
+                    {outputLanguages.map((language) => (
+                      <option key={language} value={language}>
+                        {language}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDownIcon />
+                </label>
+
+                <div className="upload-modal__status">
+                  <span className="upload-modal__pill">
+                    {selectedFile ? 'File ready to translate' : 'Waiting for file upload'}
+                  </span>
+                  <p>
+                    {selectedFile
+                      ? `${selectedFile.name} selected for ${selectedLanguage}`
+                      : 'Choose a file to enable translation'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="upload-modal__footer">
+              <button className="translate-button" type="button" disabled={!selectedFile}>
+                Translate
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -235,6 +344,33 @@ function BellIcon() {
     <SvgIcon>
       <path
         d="M9 18h6m-7-2h8l-1-2v-3a4 4 0 1 0-8 0v3l-1 2Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function CloseIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="m7 7 10 10M17 7 7 17"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function ChevronDownIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="m7 10 5 5 5-5"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"

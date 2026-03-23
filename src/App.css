@@ -336,6 +336,247 @@
   font-weight: 700;
 }
 
+.upload-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(148, 163, 184, 0.22);
+  backdrop-filter: blur(12px);
+}
+
+.upload-modal {
+  width: min(100%, 46rem);
+  max-height: min(46rem, calc(100vh - 2.5rem));
+  overflow: auto;
+  border-radius: 1.7rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background:
+    radial-gradient(circle at top right, rgba(196, 181, 253, 0.28), transparent 26%),
+    radial-gradient(circle at 50% 26%, rgba(191, 219, 254, 0.2), transparent 24%),
+    rgba(255, 255, 255, 0.95);
+  box-shadow: 0 36px 90px rgba(15, 23, 42, 0.18);
+}
+
+.upload-modal__header,
+.upload-modal__footer {
+  padding: 1.2rem 1.5rem;
+}
+
+.upload-modal__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+}
+
+.upload-modal__eyebrow,
+.upload-modal__label {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+}
+
+.upload-modal__eyebrow {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.upload-modal__header h2 {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.7rem, 2.6vw, 2.3rem);
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+}
+
+.upload-modal__close {
+  width: 3.7rem;
+  height: 3.7rem;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.5);
+  color: var(--text-strong);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    background 180ms ease;
+
+  svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}
+
+.upload-modal__close:hover {
+  transform: translateY(-1px);
+  background: rgba(226, 232, 240, 0.72);
+}
+
+.upload-modal__body {
+  display: grid;
+  gap: 1.1rem;
+  padding: 1.2rem 1.5rem 0;
+}
+
+.dropzone {
+  min-height: 15.5rem;
+  border-radius: 1.35rem;
+  border: 2px dashed rgba(196, 181, 253, 0.75);
+  background:
+    radial-gradient(circle at 50% 34%, rgba(191, 219, 254, 0.34), transparent 24%),
+    rgba(255, 255, 255, 0.7);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 1.1rem;
+  cursor: pointer;
+}
+
+.dropzone__input {
+  display: none;
+}
+
+.dropzone__icon {
+  width: 4.75rem;
+  height: 4.75rem;
+  margin: 0 auto 0.9rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(191, 219, 254, 0.78), rgba(221, 214, 254, 0.82));
+  color: #4f46e5;
+
+  svg {
+    width: 1.6rem;
+    height: 1.6rem;
+  }
+}
+
+.dropzone__title {
+  color: var(--text-strong);
+  font: 800 clamp(1.25rem, 1.8vw, 1.8rem) / 1.08 var(--heading);
+  letter-spacing: -0.05em;
+}
+
+.dropzone__subtitle,
+.dropzone__caption {
+  color: #64748b;
+}
+
+.dropzone__subtitle {
+  margin-top: 0.65rem;
+  font-size: clamp(0.95rem, 1.25vw, 1.1rem);
+}
+
+.dropzone__caption {
+  margin-top: 0.8rem;
+  max-width: 33rem;
+  font-size: clamp(0.82rem, 1vw, 0.95rem);
+}
+
+.upload-modal__settings {
+  border-radius: 1.35rem;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(248, 250, 252, 0.74);
+  padding: 1.1rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.upload-modal__label {
+  color: var(--text-strong);
+  font-size: 0.82rem;
+}
+
+.language-select {
+  position: relative;
+  display: block;
+
+  select {
+    width: 100%;
+    appearance: none;
+    border: 1px solid rgba(203, 213, 225, 0.95);
+    border-radius: 1rem;
+    background: #fff;
+    padding: 0.9rem 3.3rem 0.9rem 1rem;
+    color: var(--text-strong);
+    font: 500 1rem/1.2 var(--sans);
+    outline: 0;
+  }
+
+  svg {
+    position: absolute;
+    top: 50%;
+    right: 1.1rem;
+    width: 1.15rem;
+    height: 1.15rem;
+    transform: translateY(-50%);
+    color: #64748b;
+    pointer-events: none;
+  }
+}
+
+.upload-modal__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.upload-modal__pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.95);
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.upload-modal__footer {
+  border-top: 1px solid rgba(226, 232, 240, 0.95);
+}
+
+.translate-button {
+  width: 100%;
+  min-height: 3.7rem;
+  border: 0;
+  border-radius: 1.15rem;
+  background: linear-gradient(90deg, #9ca3af, #a5b4fc);
+  color: #fff;
+  font: 800 1.1rem/1 var(--heading);
+  letter-spacing: -0.03em;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
+}
+
+.translate-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 38px rgba(99, 102, 241, 0.24);
+}
+
+.translate-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
 .documents-section {
   display: grid;
   gap: 1rem;
@@ -553,6 +794,47 @@
   .profile-chip__role {
     white-space: nowrap;
   }
+
+  .upload-modal-backdrop {
+    padding: 1rem;
+  }
+
+  .upload-modal__header,
+  .upload-modal__body,
+  .upload-modal__footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .upload-modal__header {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .upload-modal__body {
+    padding-top: 1rem;
+  }
+
+  .dropzone {
+    min-height: 14rem;
+    padding: 1rem;
+  }
+
+  .dropzone__icon {
+    width: 4.2rem;
+    height: 4.2rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .upload-modal__status {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .translate-button {
+    min-height: 3.4rem;
+    font-size: 1rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -573,5 +855,29 @@
   .profile-chip {
     width: 100%;
     justify-content: center;
+  }
+
+  .upload-modal {
+    width: min(100%, 28rem);
+    border-radius: 1.25rem;
+  }
+
+  .upload-modal__header {
+    align-items: start;
+  }
+
+  .upload-modal__close {
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .upload-modal__settings {
+    padding: 1rem;
+    border-radius: 1.1rem;
+  }
+
+  .language-select select {
+    font-size: 0.95rem;
+    padding: 0.85rem 3rem 0.85rem 0.9rem;
   }
 }
