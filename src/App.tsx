@@ -9,6 +9,12 @@ type DocumentItem = {
   progress?: number
 }
 
+type ChatMessage = {
+  id: number
+  role: 'assistant' | 'user'
+  text: string
+}
+
 const recentDocuments: DocumentItem[] = [
   {
     title: 'Regional Lab Workflow Guide.pdf',
@@ -33,12 +39,41 @@ const recentDocuments: DocumentItem[] = [
 
 const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
 const authLanguages = ['English', 'Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
+const translatedSamples: Record<string, string> = {
+  Hindi:
+    'यह दस्तावेज़ लैब प्रक्रिया, सैंपल हैंडलिंग, और सुरक्षा निर्देशों का अनुवादित संस्करण है। सभी तकनीकी शब्दों को यथासंभव मूल अर्थ के साथ सुरक्षित रखा गया है ताकि फील्ड टीम इसे सीधे उपयोग कर सके।',
+  Tamil:
+    'இந்த ஆவணம் ஆய்வக செயல்முறை, மாதிரி கையாளுதல் மற்றும் பாதுகாப்பு வழிமுறைகளின் மொழிபெயர்க்கப்பட்ட பதிப்பு ஆகும். களப்பயன்பாட்டிற்கு தொழில்நுட்ப சொற்கள் இயன்றவரை அசல் பொருளுடன் வைத்திருக்கப்பட்டுள்ளன.',
+  Bengali:
+    'এই নথিটি ল্যাব প্রক্রিয়া, নমুনা পরিচালনা এবং সুরক্ষা নির্দেশিকার অনূদিত সংস্করণ। ফিল্ড টিম যাতে সহজে ব্যবহার করতে পারে, তাই প্রযুক্তিগত শব্দগুলো মূল অর্থের কাছাকাছি রাখা হয়েছে।',
+  Telugu:
+    'ఈ పత్రం ప్రయోగశాల ప్రక్రియలు, నమూనా నిర్వహణ మరియు భద్రతా సూచనల అనువాదిత రూపం. ఫీల్డ్ టీమ్ నేరుగా ఉపయోగించగలిగేలా సాంకేతిక పదాలను అసలు భావానికి దగ్గరగా ఉంచాం.',
+  Marathi:
+    'हा दस्तऐवज प्रयोगशाळा प्रक्रिया, नमुना हाताळणी आणि सुरक्षा सूचनांचा अनुवादित आवृत्ती आहे. फील्ड टीमला थेट वापरता यावा म्हणून तांत्रिक संज्ञा मूळ अर्थाजवळ ठेवण्यात आल्या आहेत.',
+}
+const originalSampleText =
+  'This document outlines sample intake, reagent preparation, cold-chain handling, and emergency escalation procedures for regional lab operators. Preserve technical terminology, dosage instructions, and sequence-critical actions during translation.'
 
 function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
   const [isUploadOpen, setIsUploadOpen] = useState(false)
+  const [isProcessingOpen, setIsProcessingOpen] = useState(false)
+  const [processingStep, setProcessingStep] = useState<'uploading' | 'extracting' | 'translating' | 'done'>('uploading')
   const [selectedLanguage, setSelectedLanguage] = useState(outputLanguages[0])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [translatedText, setTranslatedText] = useState('')
+  const [isReaderOpen, setIsReaderOpen] = useState(false)
+  const [showOriginalText, setShowOriginalText] = useState(false)
+  const [originalSearch, setOriginalSearch] = useState('')
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: 1,
+      role: 'assistant' as const,
+      text: 'Ask anything about the uploaded PDF and I will answer from the translated document context.',
+    },
+  ])
   const fileInputId = useId()
 
   useEffect(() => {
@@ -54,7 +89,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!isUploadOpen) return
+    if (!isUploadOpen && !isProcessingOpen) return
 
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -62,7 +97,49 @@ function App() {
     return () => {
       document.body.style.overflow = previousOverflow
     }
-  }, [isUploadOpen])
+  }, [isProcessingOpen, isUploadOpen])
+
+  useEffect(() => {
+    if (!isProcessingOpen || processingStep === 'done') return
+
+    const steps: Record<'uploading' | 'extracting' | 'translating', number> = {
+      uploading: 900,
+      extracting: 1200,
+      translating: 1800,
+    }
+
+    const timer = window.setTimeout(() => {
+      if (processingStep === 'uploading') {
+        setProcessingStep('extracting')
+        return
+      }
+
+      if (processingStep === 'extracting') {
+        setProcessingStep('translating')
+        return
+      }
+
+      setProcessingStep('done')
+      setTranslatedText(translatedSamples[selectedLanguage] ?? translatedSamples.Hindi)
+    }, steps[processingStep])
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [isProcessingOpen, processingStep, selectedFile, selectedLanguage])
+
+  useEffect(() => {
+    if (!isProcessingOpen || processingStep !== 'done') return
+
+    const timer = window.setTimeout(() => {
+      setIsProcessingOpen(false)
+      setIsReaderOpen(true)
+    }, 500)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [isProcessingOpen, processingStep])
 
   function openUploadModal() {
     setIsUploadOpen(true)
@@ -75,6 +152,38 @@ function App() {
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const nextFile = event.target.files?.[0] ?? null
     setSelectedFile(nextFile)
+  }
+
+  function startTranslation() {
+    if (!selectedFile) return
+    setIsUploadOpen(false)
+    setIsProcessingOpen(true)
+    setIsReaderOpen(false)
+    setProcessingStep('uploading')
+    setTranslatedText('')
+    setShowOriginalText(false)
+    setOriginalSearch('')
+  }
+
+  function closeReader() {
+    setIsReaderOpen(false)
+  }
+
+  function handleAskDocument() {
+    const trimmedInput = chatInput.trim()
+    if (!trimmedInput) return
+
+    const nextId = chatMessages.length + 1
+    setChatMessages((current) => [
+      ...current,
+      { id: nextId, role: 'user', text: trimmedInput },
+      {
+        id: nextId + 1,
+        role: 'assistant',
+        text: `Based on the uploaded PDF, the key point is: ${translatedText || originalSampleText}`,
+      },
+    ])
+    setChatInput('')
   }
 
   function navigateTo(nextPath: '/' | '/signin' | '/signup' | '/dashboard') {
@@ -180,10 +289,17 @@ function App() {
         </div>
 
         <div className="topbar__utility">
-          <label className="search" aria-label="Search translated lab documents">
-            <SearchIcon />
-            <input type="search" placeholder="Search translated lab guides..." />
-          </label>
+          {isReaderOpen && showOriginalText ? (
+            <label className="search" aria-label="Find a word in the original output">
+              <SearchIcon />
+              <input
+                type="search"
+                placeholder="Find a word in original output..."
+                value={originalSearch}
+                onChange={(event) => setOriginalSearch(event.target.value)}
+              />
+            </label>
+          ) : null}
 
           <div className="topbar__actions">
             <button className="icon-button" type="button" aria-label="Notifications">
@@ -205,79 +321,186 @@ function App() {
       </header>
 
       <main className="content">
-        <section className="page-intro">
-          <p className="eyebrow">Dashboard</p>
-          <h1>Welcome back, Sarah</h1>
-          <p className="page-intro__text">
-            Your regional lab translation workspace is ready. Review active
-            translation jobs, upload new technical documents, and continue where
-            you left off.
-          </p>
-        </section>
+        {isReaderOpen ? (
+          <section className="reader-shell">
+            <div className="reader-toolbar">
+              <button className="reader-button reader-button--ghost" type="button" onClick={closeReader}>
+                <ArrowLeftIcon />
+                Back
+              </button>
 
-        <section className="overview-grid" aria-label="Overview">
-          <article className="upload-panel">
-            <div className="upload-panel__icon">
-              <UploadIcon />
-            </div>
-            <h2>Upload Document</h2>
-            <p>
-              Upload technical lab documentation, SOPs, and manuals to translate
-              them into local languages for clearer field-level understanding.
-            </p>
-            <button className="ghost-button" type="button" onClick={openUploadModal}>
-              Upload Files
-            </button>
-          </article>
-        </section>
+              <div className="reader-toolbar__actions">
+                <label className="reader-language" aria-label="Change translated language">
+                  <select
+                    value={selectedLanguage}
+                    onChange={(event) => {
+                      const nextLanguage = event.target.value
+                      setSelectedLanguage(nextLanguage)
+                      setTranslatedText(translatedSamples[nextLanguage] ?? translatedSamples.Hindi)
+                    }}
+                  >
+                    {outputLanguages.map((language) => (
+                      <option key={language} value={language}>
+                        {language}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDownIcon />
+                </label>
 
-        <section className="documents-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Recent activity</p>
-              <h2>Recent Translations</h2>
-            </div>
-          </div>
-
-          <div className="document-grid">
-            {recentDocuments.map((document) => (
-              <article key={document.title} className="document-card">
-                <div className="document-card__top">
-                  <div className={`document-card__icon document-card__icon--${document.kind}`}>
-                    <DocumentIcon kind={document.kind} />
-                  </div>
-                </div>
-
-                <h3>{document.title}</h3>
-                <p>{document.date}</p>
-
-                <div className="document-card__actions">
-                  <button className="small-button small-button--muted" type="button">
-                    View
-                  </button>
-                </div>
-
-                {document.progress ? (
-                  <div className="progress progress--subtle" aria-label="Processing progress">
-                    <div
-                      className="progress__bar"
-                      style={{ width: `${document.progress}%` }}
-                    />
-                  </div>
-                ) : null}
-              </article>
-            ))}
-
-            <article className="document-card document-card--skeleton" aria-hidden="true">
-              <div className="skeleton skeleton--square" />
-              <div className="skeleton skeleton--line-lg" />
-              <div className="skeleton skeleton--line-sm" />
-              <div className="document-card__actions">
-                <div className="skeleton skeleton--button" />
+                <button className="reader-button reader-button--primary" type="button">
+                  <VolumeIcon />
+                  Text to Speech
+                </button>
               </div>
-            </article>
-          </div>
-        </section>
+            </div>
+
+            <div className="reader-card">
+              <div className="reader-card__header">
+                <div>
+                  <p className="eyebrow">{showOriginalText ? 'Original Output' : 'Translated Output'}</p>
+                  <h2>{selectedFile?.name ?? 'Translated document'}</h2>
+                </div>
+
+                <button
+                  className="reader-toggle"
+                  type="button"
+                  onClick={() => {
+                    setShowOriginalText((current) => !current)
+                    setOriginalSearch('')
+                  }}
+                >
+                  {showOriginalText ? 'View translated output' : 'View original output'}
+                </button>
+              </div>
+
+              <article className="reader-content">
+                <p>
+                  {showOriginalText
+                    ? renderHighlightedText(originalSampleText, originalSearch)
+                    : translatedText}
+                </p>
+              </article>
+            </div>
+
+            <div className="reader-chat-fab">
+              {isChatOpen ? (
+                <section className="reader-chat reader-chat--popup">
+                  <div className="reader-chat__topbar">
+                    <p>Ask about this PDF</p>
+                    <button type="button" onClick={() => setIsChatOpen(false)}>
+                      <CloseIcon />
+                    </button>
+                  </div>
+
+                  <div className="reader-chat__messages">
+                    {chatMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`reader-chat__bubble reader-chat__bubble--${message.role}`}
+                      >
+                        {message.text}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="reader-chat__composer">
+                    <input
+                      type="text"
+                      placeholder="Ask the LLM about this PDF..."
+                      value={chatInput}
+                      onChange={(event) => setChatInput(event.target.value)}
+                    />
+                    <button type="button" onClick={handleAskDocument}>
+                      Ask
+                    </button>
+                  </div>
+                </section>
+              ) : (
+                <button className="reader-chat-launcher" type="button" onClick={() => setIsChatOpen(true)}>
+                  <ChatIcon />
+                  Chat
+                </button>
+              )}
+            </div>
+          </section>
+        ) : (
+          <>
+            <section className="page-intro">
+              <p className="eyebrow">Dashboard</p>
+              <h1>Welcome back, Sarah</h1>
+              <p className="page-intro__text">
+                Your regional lab translation workspace is ready. Review active
+                translation jobs, upload new technical documents, and continue where
+                you left off.
+              </p>
+            </section>
+
+            <section className="overview-grid" aria-label="Overview">
+              <article className="upload-panel">
+                <div className="upload-panel__icon">
+                  <UploadIcon />
+                </div>
+                <h2>Upload Document</h2>
+                <p>
+                  Upload technical lab documentation, SOPs, and manuals to translate
+                  them into local languages for clearer field-level understanding.
+                </p>
+                <button className="ghost-button" type="button" onClick={openUploadModal}>
+                  Upload Files
+                </button>
+              </article>
+            </section>
+
+            <section className="documents-section">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Recent activity</p>
+                  <h2>Recent Translations</h2>
+                </div>
+              </div>
+
+              <div className="document-grid">
+                {recentDocuments.map((document) => (
+                  <article key={document.title} className="document-card">
+                    <div className="document-card__top">
+                      <div className={`document-card__icon document-card__icon--${document.kind}`}>
+                        <DocumentIcon kind={document.kind} />
+                      </div>
+                    </div>
+
+                    <h3>{document.title}</h3>
+                    <p>{document.date}</p>
+
+                    <div className="document-card__actions">
+                      <button className="small-button small-button--muted" type="button">
+                        View
+                      </button>
+                    </div>
+
+                    {document.progress ? (
+                      <div className="progress progress--subtle" aria-label="Processing progress">
+                        <div
+                          className="progress__bar"
+                          style={{ width: `${document.progress}%` }}
+                        />
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+
+                <article className="document-card document-card--skeleton" aria-hidden="true">
+                  <div className="skeleton skeleton--square" />
+                  <div className="skeleton skeleton--line-lg" />
+                  <div className="skeleton skeleton--line-sm" />
+                  <div className="document-card__actions">
+                    <div className="skeleton skeleton--button" />
+                  </div>
+                </article>
+              </div>
+            </section>
+          </>
+        )}
 
       </main>
 
@@ -311,7 +534,10 @@ function App() {
             </div>
 
             <div className="upload-modal__body">
-              <label className="dropzone" htmlFor={fileInputId}>
+              <label
+                className={`dropzone${selectedFile ? ' dropzone--selected' : ''}`}
+                htmlFor={fileInputId}
+              >
                 <input
                   id={fileInputId}
                   className="dropzone__input"
@@ -320,13 +546,25 @@ function App() {
                   onChange={handleFileChange}
                 />
                 <div className="dropzone__icon">
-                  <UploadIcon />
+                  {selectedFile ? <CheckIcon /> : <UploadIcon />}
                 </div>
-                <p className="dropzone__title">Drag and drop your file or browse</p>
-                <p className="dropzone__subtitle">Supported formats: PDF, DOCX, Markdown</p>
-                <p className="dropzone__caption">
-                  Best for SOPs, manuals, reagent instructions, and process notes
-                </p>
+                {selectedFile ? (
+                  <>
+                    <p className="dropzone__title">File uploaded</p>
+                    <p className="dropzone__subtitle">{selectedFile.name}</p>
+                    <p className="dropzone__caption">
+                      Click here to replace it with another PDF, DOCX, or Markdown file.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="dropzone__title">Drag and drop your file or browse</p>
+                    <p className="dropzone__subtitle">Supported formats: PDF, DOCX, Markdown</p>
+                    <p className="dropzone__caption">
+                      Best for SOPs, manuals, reagent instructions, and process notes
+                    </p>
+                  </>
+                )}
               </label>
 
               <div className="upload-modal__settings">
@@ -345,25 +583,73 @@ function App() {
                   </select>
                   <ChevronDownIcon />
                 </label>
-
-                <div className="upload-modal__status">
-                  <span className="upload-modal__pill">
-                    {selectedFile ? 'File ready to translate' : 'Waiting for file upload'}
-                  </span>
-                  <p>
-                    {selectedFile
-                      ? `${selectedFile.name} selected for ${selectedLanguage}`
-                      : 'Choose a file to enable translation'}
-                  </p>
-                </div>
               </div>
             </div>
 
             <div className="upload-modal__footer">
-              <button className="translate-button" type="button" disabled={!selectedFile}>
+              <button
+                className={`translate-button${selectedFile ? ' translate-button--ready' : ''}`}
+                type="button"
+                disabled={!selectedFile}
+                onClick={startTranslation}
+              >
                 Translate
               </button>
             </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isProcessingOpen ? (
+        <div className="status-popup-backdrop" role="presentation">
+          <section className="status-popup" role="status" aria-live="polite">
+            <p className="status-popup__eyebrow">Translation Status</p>
+            <h3>
+              {processingStep === 'done'
+                ? 'Translation ready'
+                : processingStep === 'translating'
+                  ? 'Translating content'
+                  : processingStep === 'extracting'
+                    ? 'Extracting text'
+                    : 'Uploading file'}
+            </h3>
+            <p className="status-popup__meta">
+              {selectedFile?.name ?? 'Selected document'} to {selectedLanguage}
+            </p>
+
+            {processingStep !== 'done' ? (
+              <>
+                <div className="status-popup__loader" aria-hidden="true">
+                  <div className="status-popup__loader-ring status-popup__loader-ring--outer" />
+                  <div className="status-popup__loader-ring status-popup__loader-ring--inner" />
+                  <div className="status-popup__loader-core">
+                    <SparkIcon />
+                  </div>
+                </div>
+                <div className="status-popup__bar">
+                  <div
+                    className="status-popup__bar-fill"
+                    style={{
+                      width:
+                        processingStep === 'uploading'
+                          ? '28%'
+                          : processingStep === 'extracting'
+                            ? '62%'
+                            : '92%',
+                    }}
+                  />
+                </div>
+                <p className="status-popup__message">
+                  {processingStep === 'uploading'
+                    ? 'Uploading your PDF and preparing it for processing.'
+                    : processingStep === 'extracting'
+                      ? 'Pulling structured text from the document.'
+                      : 'Waiting for the LLM to finish generating translated output.'}
+                </p>
+              </>
+            ) : (
+              <p className="status-popup__message">Opening translated reader...</p>
+            )}
           </section>
         </div>
       ) : null}
@@ -541,6 +827,23 @@ function SignUpPage({
   )
 }
 
+function renderHighlightedText(content: string, query: string) {
+  const trimmedQuery = query.trim()
+
+  if (!trimmedQuery) return content
+
+  const escapedQuery = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const parts = content.split(new RegExp(`(${escapedQuery})`, 'gi'))
+
+  return parts.map((part, index) =>
+    part.toLowerCase() === trimmedQuery.toLowerCase() ? (
+      <mark key={`${part}-${index}`}>{part}</mark>
+    ) : (
+      <span key={`${part}-${index}`}>{part}</span>
+    )
+  )
+}
+
 function DocumentIcon({ kind }: { kind: DocumentItem['kind'] }) {
   if (kind === 'markdown') return <MarkdownIcon />
   if (kind === 'compliance') return <ShieldIcon />
@@ -665,6 +968,83 @@ function ArrowRightIcon() {
     <SvgIcon>
       <path
         d="M5 12h14M13 7l5 5-5 5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="m7 12 3.2 3.2L17.5 8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function ArrowLeftIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M19 12H5m6-6-6 6 6 6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function VolumeIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M5 14h3l4 4V6L8 10H5v4Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function ChatIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M6 8.5A2.5 2.5 0 0 1 8.5 6h7A2.5 2.5 0 0 1 18 8.5v4A2.5 2.5 0 0 1 15.5 15H11l-3.5 3v-3H8.5A2.5 2.5 0 0 1 6 12.5v-4Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </SvgIcon>
+  )
+}
+
+function SparkIcon() {
+  return (
+    <SvgIcon>
+      <path
+        d="M12 4.5 13.8 9l4.7 1.8-4.7 1.8L12 17l-1.8-4.4-4.7-1.8L10.2 9 12 4.5Z"
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
