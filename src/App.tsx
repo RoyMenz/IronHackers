@@ -1094,7 +1094,7 @@ function App() {
           <>
             <section className="page-intro">
               <p className="eyebrow">Dashboard</p>
-              <h1>Welcome back, {authUser?.fullName ?? 'Name'}</h1>
+              <h1>Welcome, {authUser?.fullName ?? 'Name'}</h1>
               <p className="page-intro__text">
                 Your regional lab translation workspace is ready. Review active
                 translation jobs, upload new technical documents, and continue where
