@@ -149,8 +149,6 @@ function mapAuthUser(response: AuthResponse): AuthUser {
 function App() {
   const storedAuth = readStoredAuth()
   const [pathname, setPathname] = useState(() => window.location.pathname)
-  const [healthStatus, setHealthStatus] = useState<'checking' | 'connected' | 'error'>('checking')
-  const [healthMessage, setHealthMessage] = useState('Checking backend connection...')
   const [authSession, setAuthSession] = useState<AuthSession | null>(storedAuth.session)
   const [authUser, setAuthUser] = useState<AuthUser | null>(storedAuth.user)
   const [signInEmail, setSignInEmail] = useState('')
@@ -176,9 +174,8 @@ function App() {
   const [extractionPages, setExtractionPages] = useState<ExtractionPage[]>([])
   const [activeExtractionId, setActiveExtractionId] = useState<string | null>(null)
   const [isReaderLanguageLoading, setIsReaderLanguageLoading] = useState(false)
-  const [isSpeechLoading, setIsSpeechLoading] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [speechError, setSpeechError] = useState('')
+  const [speechLoadingMessageId, setSpeechLoadingMessageId] = useState<number | null>(null)
+  const [speakingMessageId, setSpeakingMessageId] = useState<number | null>(null)
   const [isReaderOpen, setIsReaderOpen] = useState(false)
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [showOriginalText, setShowOriginalText] = useState(false)
@@ -269,32 +266,15 @@ function App() {
   }, [authSession, pathname])
 
   useEffect(() => {
-    let isMounted = true
-
     async function loadHealth() {
       try {
-        const response = await getHealthStatus()
-        if (!isMounted) return
-
-        setHealthStatus(response.status === 'ok' ? 'connected' : 'error')
-        setHealthMessage(
-          response.status === 'ok'
-            ? `Backend connected. Last heartbeat: ${new Date(response.timestamp).toLocaleString()}`
-            : 'Backend responded with an unexpected status.'
-        )
-      } catch (error) {
-        if (!isMounted) return
-
-        setHealthStatus('error')
-        setHealthMessage(error instanceof Error ? error.message : 'Unable to reach the backend.')
+        await getHealthStatus()
+      } catch {
+        // Keep the backend heartbeat silent in the UI.
       }
     }
 
-    loadHealth()
-
-    return () => {
-      isMounted = false
-    }
+    void loadHealth()
   }, [])
 
   useEffect(() => {
@@ -317,7 +297,6 @@ function App() {
 
   useEffect(() => {
     stopSpeechPlayback()
-    setSpeechError('')
   }, [activeExtractionId, currentPageIndex, showOriginalText])
 
   useEffect(() => {
@@ -588,7 +567,7 @@ function App() {
   function stopSpeechPlayback() {
     const currentAudio = activeSpeechAudioRef.current
     if (!currentAudio) {
-      setIsSpeaking(false)
+      setSpeakingMessageId(null)
       return
     }
 
@@ -598,30 +577,31 @@ function App() {
     }
 
     activeSpeechAudioRef.current = null
-    setIsSpeaking(false)
+    setSpeakingMessageId(null)
+    setSpeechLoadingMessageId(null)
   }
 
-  async function handleTextToSpeech() {
-    const textToSpeak = getSpeakableText(currentReaderPage)
+  async function handleChatMessageSpeech(messageId: number, messageText: string) {
+    const textToSpeak = getSpeakableText(messageText)
 
-    if (isSpeaking) {
+    if (speakingMessageId === messageId) {
       stopSpeechPlayback()
-      setSpeechError('')
       return
     }
 
     if (!textToSpeak) {
-      setSpeechError('No readable text is available on this page yet.')
       return
     }
 
     if (!window.puter?.ai?.txt2speech) {
-      setSpeechError('PuterJS speech is unavailable right now. Refresh and try again.')
       return
     }
 
-    setIsSpeechLoading(true)
-    setSpeechError('')
+    if (speechLoadingMessageId === messageId) {
+      return
+    }
+
+    setSpeechLoadingMessageId(messageId)
 
     try {
       stopSpeechPlayback()
@@ -629,11 +609,12 @@ function App() {
       const speechConfig = getSpeechConfig()
       const audio = await window.puter.ai.txt2speech(textToSpeak, speechConfig)
       activeSpeechAudioRef.current = audio
-      setIsSpeaking(true)
+      setSpeakingMessageId(messageId)
 
       audio.onended = () => {
         activeSpeechAudioRef.current = null
-        setIsSpeaking(false)
+        setSpeakingMessageId(null)
+        setSpeechLoadingMessageId(null)
       }
 
       audio.onpause = () => {
@@ -642,16 +623,17 @@ function App() {
         }
 
         activeSpeechAudioRef.current = null
-        setIsSpeaking(false)
+        setSpeakingMessageId(null)
+        setSpeechLoadingMessageId(null)
       }
 
       await audio.play()
     } catch (error) {
       activeSpeechAudioRef.current = null
-      setIsSpeaking(false)
-      setSpeechError(error instanceof Error ? error.message : 'Unable to generate speech for this page.')
+      setSpeakingMessageId(null)
+      console.error(error)
     } finally {
-      setIsSpeechLoading(false)
+      setSpeechLoadingMessageId((current) => (current === messageId ? null : current))
     }
   }
 
@@ -696,7 +678,6 @@ function App() {
 
   async function handleReaderLanguageChange(nextLanguage: string) {
     stopSpeechPlayback()
-    setSpeechError('')
     setSelectedLanguage(nextLanguage)
 
     if (!authSession?.accessToken || !activeExtractionId) {
@@ -776,7 +757,6 @@ function App() {
             <p className="gateway-hero__text">
               Access the ecosystem of scientific precision and linguistic mastery.
             </p>
-            <ConnectionStatus status={healthStatus} message={healthMessage} />
             <GatewayWorkspaceSummary
               authUserEmail={authUser?.email ?? null}
               documentCount={documents.length}
@@ -844,8 +824,6 @@ function App() {
         errorMessage={signInError}
         infoMessage={signInNotice}
         isSubmitting={isSigningIn}
-        statusMessage={healthMessage}
-        statusState={healthStatus}
         onFooterAction={() => {
           setSignInError('')
           setSignInNotice('')
@@ -897,8 +875,6 @@ function App() {
           navigateTo('/signin')
         }}
         onSignIn={() => navigateTo('/signin')}
-        statusMessage={healthMessage}
-        statusState={healthStatus}
       />
     )
   }
@@ -930,11 +906,6 @@ function App() {
           ) : null}
 
           <div className="topbar__actions">
-            <button className="icon-button" type="button" aria-label="Notifications">
-              <BellIcon />
-              <span className="icon-button__dot" />
-            </button>
-
             <button className="logout-button" type="button" onClick={handleLogout}>
               Logout
             </button>
@@ -945,7 +916,6 @@ function App() {
               </div>
               <div>
                 <p className="profile-chip__name">{authUser?.fullName ?? 'Signed-in user'}</p>
-                <p className="profile-chip__role">Localization Program Lead</p>
               </div>
             </div>
           </div>
@@ -981,20 +951,6 @@ function App() {
                 {isReaderLanguageLoading ? (
                   <p className="reader-language-status">Loading {selectedLanguage} translation...</p>
                 ) : null}
-
-                {speechError ? <p className="reader-language-status reader-language-status--error">{speechError}</p> : null}
-
-                <button
-                  className="reader-button reader-button--primary"
-                  type="button"
-                  disabled={isSpeechLoading || isReaderLanguageLoading}
-                  onClick={() => {
-                    void handleTextToSpeech()
-                  }}
-                >
-                  <VolumeIcon />
-                  {isSpeechLoading ? 'Preparing audio...' : isSpeaking ? 'Stop audio' : 'Text to Speech'}
-                </button>
               </div>
             </div>
 
@@ -1078,9 +1034,33 @@ function App() {
                         key={message.id}
                         className={`reader-chat__bubble reader-chat__bubble--${message.role}`}
                       >
-                        {message.text}
+                        <div className="reader-chat__bubble-content">
+                          <span>{message.text}</span>
+                          {message.role === 'assistant' ? (
+                            <button
+                              className={`reader-chat__speech-button${speakingMessageId === message.id ? ' reader-chat__speech-button--active' : ''}`}
+                              type="button"
+                              aria-label={speakingMessageId === message.id ? 'Stop audio' : 'Play audio'}
+                              disabled={speechLoadingMessageId === message.id}
+                              onClick={() => {
+                                void handleChatMessageSpeech(message.id, message.text)
+                              }}
+                            >
+                              <VolumeIcon />
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
+                    {isChatLoading ? (
+                      <div className="reader-chat__bubble reader-chat__bubble--assistant reader-chat__bubble--typing">
+                        <div className="reader-chat__typing" aria-label="Assistant is typing" role="status">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="reader-chat__composer">
@@ -1120,7 +1100,6 @@ function App() {
                 translation jobs, upload new technical documents, and continue where
                 you left off.
               </p>
-              <ConnectionStatus status={healthStatus} message={healthMessage} />
               {documentsError ? <p className="auth-feedback auth-feedback--error">{documentsError}</p> : null}
             </section>
 
@@ -1359,8 +1338,6 @@ function AuthShell({
   isSubmitting,
   onFooterAction,
   onSubmit,
-  statusMessage,
-  statusState,
   title,
 }: {
   actionLabel: string
@@ -1374,8 +1351,6 @@ function AuthShell({
   isSubmitting?: boolean
   onFooterAction: () => void
   onSubmit: () => Promise<void> | void
-  statusMessage: string
-  statusState: 'checking' | 'connected' | 'error'
   title: string
 }) {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -1402,7 +1377,6 @@ function AuthShell({
             <h1>{title}</h1>
             <p>{helperText}</p>
           </div>
-          <ConnectionStatus status={statusState} message={statusMessage} />
 
           <form className="auth-form" onSubmit={handleSubmit}>
             {children}
@@ -1449,14 +1423,10 @@ function SignUpPage({
   onAuthenticated,
   onRequireSignIn,
   onSignIn,
-  statusMessage,
-  statusState,
 }: {
   onAuthenticated: (payload: { session: AuthSession; user: AuthUser }) => void
   onRequireSignIn: (email: string, message: string) => void
   onSignIn: () => void
-  statusMessage: string
-  statusState: 'checking' | 'connected' | 'error'
 }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -1535,8 +1505,6 @@ function SignUpPage({
       title="Create your account."
       footerPrompt="Already have an account?"
       footerAction="Sign in"
-      statusMessage={statusMessage}
-      statusState={statusState}
       onFooterAction={onSignIn}
       onSubmit={handleSubmit}
     >
@@ -1625,21 +1593,6 @@ function SignUpPage({
         </div>
       </AuthField>
     </AuthShell>
-  )
-}
-
-function ConnectionStatus({
-  message,
-  status,
-}: {
-  message: string
-  status: 'checking' | 'connected' | 'error'
-}) {
-  return (
-    <div className={`connection-status connection-status--${status}`} role="status">
-      <span className="connection-status__dot" aria-hidden="true" />
-      <p>{message}</p>
-    </div>
   )
 }
 
@@ -1959,20 +1912,6 @@ function SearchIcon() {
     <SvgIcon>
       <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.8" />
       <path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
-    </SvgIcon>
-  )
-}
-
-function BellIcon() {
-  return (
-    <SvgIcon>
-      <path
-        d="M9 18h6m-7-2h8l-1-2v-3a4 4 0 1 0-8 0v3l-1 2Z"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
     </SvgIcon>
   )
 }
