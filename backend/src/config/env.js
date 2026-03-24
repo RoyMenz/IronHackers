@@ -1,4 +1,4 @@
-const path = require('path');
+﻿const path = require('path');
 const dotenv = require('dotenv');
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -20,6 +20,15 @@ const env = {
   supabaseUrl: process.env.SUPABASE_URL || '',
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  azureDocumentIntelligenceEndpoint: process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT || '',
+  azureDocumentIntelligenceKey: process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY || '',
+  azureDocumentIntelligenceModelId: process.env.AZURE_DOCUMENT_INTELLIGENCE_MODEL_ID || 'prebuilt-layout',
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openaiTranslationModel: process.env.OPENAI_TRANSLATION_MODEL || 'gpt-4o',
+  azureOpenAiEndpoint: process.env.AZURE_OPENAI_ENDPOINT || '',
+  azureOpenAiApiKey: process.env.AZURE_OPENAI_API_KEY || '',
+  azureOpenAiDeployment: process.env.AZURE_OPENAI_DEPLOYMENT || '',
+  azureOpenAiApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-10-21',
 };
 
 module.exports = env;

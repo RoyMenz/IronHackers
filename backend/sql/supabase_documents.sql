@@ -1,4 +1,4 @@
-create extension if not exists pgcrypto;
+﻿create extension if not exists pgcrypto;
 
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
@@ -34,6 +34,47 @@ create policy "Users can insert own documents"
 drop policy if exists "Users can delete own documents" on public.documents;
 create policy "Users can delete own documents"
   on public.documents
+  for delete
+  to authenticated
+  using (auth.uid() = user_id);
+
+create table if not exists public.document_extractions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  document_id uuid not null references public.documents(id) on delete cascade,
+  model_id text not null,
+  extracted_content text not null,
+  pages_json jsonb not null default '[]'::jsonb,
+  key_value_pairs_json jsonb not null default '[]'::jsonb,
+  llm_payload_json jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists document_extractions_user_id_created_at_idx
+  on public.document_extractions (user_id, created_at desc);
+
+create index if not exists document_extractions_document_id_created_at_idx
+  on public.document_extractions (document_id, created_at desc);
+
+alter table public.document_extractions enable row level security;
+
+drop policy if exists "Users can read own document extractions" on public.document_extractions;
+create policy "Users can read own document extractions"
+  on public.document_extractions
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can insert own document extractions" on public.document_extractions;
+create policy "Users can insert own document extractions"
+  on public.document_extractions
+  for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own document extractions" on public.document_extractions;
+create policy "Users can delete own document extractions"
+  on public.document_extractions
   for delete
   to authenticated
   using (auth.uid() = user_id);
