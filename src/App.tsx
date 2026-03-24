@@ -1,9 +1,13 @@
 //Commiting to check Code Changes
-import { useEffect, useId, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import './App.css'
 import {
+  chatWithDocument,
   extractAndTranslateDocument,
+  getCurrentUser,
   getHealthStatus,
+  getLatestDocumentView,
+  listExtractionTranslations,
   listDocuments,
   signIn,
   signUp,
@@ -28,9 +32,21 @@ type ChatMessage = {
   text: string
 }
 
+type ExtractionPage = {
+  pageNumber: number
+  lines: string[]
+}
+
+type TranslatedPage = {
+  pageNumber: number
+  translatedText: string
+}
+
 type AuthUser = {
   id: string
   email: string | null
+  fullName: string | null
+  languagesKnown: string[]
 }
 
 type AuthSession = {
@@ -38,8 +54,8 @@ type AuthSession = {
   refreshToken: string | null
 }
 
-const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
-const authLanguages = ['English', 'Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
+const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi', 'Kannada']
+const authLanguages = ['English', 'Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi', 'Kannada']
 const translatedSamples: Record<string, string> = {
   Hindi:
     'यह दस्तावेज़ लैब प्रक्रिया, सैंपल हैंडलिंग, और सुरक्षा निर्देशों का अनुवादित संस्करण है। सभी तकनीकी शब्दों को यथासंभव मूल अर्थ के साथ सुरक्षित रखा गया है ताकि फील्ड टीम इसे सीधे उपयोग कर सके।',
@@ -51,10 +67,40 @@ const translatedSamples: Record<string, string> = {
     'ఈ పత్రం ప్రయోగశాల ప్రక్రియలు, నమూనా నిర్వహణ మరియు భద్రతా సూచనల అనువాదిత రూపం. ఫీల్డ్ టీమ్ నేరుగా ఉపయోగించగలిగేలా సాంకేతిక పదాలను అసలు భావానికి దగ్గరగా ఉంచాం.',
   Marathi:
     'हा दस्तऐवज प्रयोगशाळा प्रक्रिया, नमुना हाताळणी आणि सुरक्षा सूचनांचा अनुवादित आवृत्ती आहे. फील्ड टीमला थेट वापरता यावा म्हणून तांत्रिक संज्ञा मूळ अर्थाजवळ ठेवण्यात आल्या आहेत.',
+  Kannada:
+    'ಈ ದಸ್ತಾವೇಜು ಪ್ರಯೋಗಾಲಯ ಪ್ರಕ್ರಿಯೆಗಳು, ಮಾದರಿ ನಿರ್ವಹಣೆ ಮತ್ತು ಭದ್ರತಾ ಸೂಚನೆಗಳ ಅನುವಾದಿತ ಆವೃತ್ತಿಯಾಗಿದೆ. ಫೀಲ್ಡ್ ತಂಡವು ನೇರವಾಗಿ ಬಳಸಲು ತಾಂತ್ರಿಕ ಪದಗಳನ್ನು ಮೂಲ ಅರ್ಥಕ್ಕೆ ಹತ್ತಿರವಾಗಿಯೇ ಉಳಿಸಲಾಗಿದೆ.',
 }
 const originalSampleText =
   'This document outlines sample intake, reagent preparation, cold-chain handling, and emergency escalation procedures for regional lab operators. Preserve technical terminology, dosage instructions, and sequence-critical actions during translation.'
 const authStorageKey = 'lablingo-auth-session'
+const speechTextLimit = 2800
+
+type PuterSpeechAudio = {
+  play: () => Promise<void> | void
+  pause?: () => void
+  currentTime?: number
+  onended?: (() => void) | null
+  onpause?: (() => void) | null
+}
+
+declare global {
+  interface Window {
+    puter?: {
+      ai?: {
+        txt2speech: (
+          text: string,
+          options?: {
+            language?: string
+            voice?: string
+            engine?: string
+            provider?: string
+            model?: string
+          }
+        ) => Promise<PuterSpeechAudio>
+      }
+    }
+  }
+}
 
 function readStoredAuth() {
   if (typeof window === 'undefined') {
@@ -91,6 +137,15 @@ function readStoredAuth() {
   }
 }
 
+function mapAuthUser(response: AuthResponse): AuthUser {
+  return {
+    id: response.user?.id ?? '',
+    email: response.user?.email ?? null,
+    fullName: response.profile?.full_name ?? getUserDisplayName(response.user),
+    languagesKnown: response.profile?.languages_known ?? [],
+  }
+}
+
 function App() {
   const storedAuth = readStoredAuth()
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -112,15 +167,25 @@ function App() {
   const [processingError, setProcessingError] = useState('')
   const [selectedLanguage, setSelectedLanguage] = useState(outputLanguages[0])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [activeDocumentName, setActiveDocumentName] = useState('Translated document')
   const [translatedText, setTranslatedText] = useState('')
+  const [translatedPages, setTranslatedPages] = useState<TranslatedPage[]>([])
+  const [translationCache, setTranslationCache] = useState<Record<string, string>>({})
+  const [translatedPageCache, setTranslatedPageCache] = useState<Record<string, TranslatedPage[]>>({})
   const [originalText, setOriginalText] = useState(originalSampleText)
+  const [extractionPages, setExtractionPages] = useState<ExtractionPage[]>([])
   const [activeExtractionId, setActiveExtractionId] = useState<string | null>(null)
   const [isReaderLanguageLoading, setIsReaderLanguageLoading] = useState(false)
+  const [isSpeechLoading, setIsSpeechLoading] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [speechError, setSpeechError] = useState('')
   const [isReaderOpen, setIsReaderOpen] = useState(false)
+  const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [showOriginalText, setShowOriginalText] = useState(false)
   const [originalSearch, setOriginalSearch] = useState('')
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [chatInput, setChatInput] = useState('')
+  const [isChatLoading, setIsChatLoading] = useState(false)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: 1,
@@ -129,6 +194,18 @@ function App() {
     },
   ])
   const fileInputId = useId()
+  const latestDocument = documents[0] ?? null
+  const isAuthenticated = Boolean(authSession?.accessToken && authUser)
+  const readerPages = buildReaderPages({
+    extractionPages,
+    originalText,
+    showOriginalText,
+    translatedPages,
+    translatedText,
+  })
+  const safePageIndex = Math.min(currentPageIndex, Math.max(readerPages.length - 1, 0))
+  const currentReaderPage = readerPages[safePageIndex] ?? (showOriginalText ? originalText : translatedText)
+  const activeSpeechAudioRef = useRef<PuterSpeechAudio | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -146,6 +223,33 @@ function App() {
       })
     )
   }, [authSession, authUser])
+
+  useEffect(() => {
+    const accessToken = authSession?.accessToken ?? ''
+
+    if (!accessToken) {
+      return
+    }
+
+    let isMounted = true
+
+    async function loadCurrentUser() {
+      try {
+        const response = await getCurrentUser(accessToken)
+        if (!isMounted || !response.user?.id) return
+
+        setAuthUser(mapAuthUser(response))
+      } catch {
+        // Keep the locally stored user if the session check fails transiently.
+      }
+    }
+
+    loadCurrentUser()
+
+    return () => {
+      isMounted = false
+    }
+  }, [authSession?.accessToken])
 
   useEffect(() => {
     function handlePopState() {
@@ -205,6 +309,18 @@ function App() {
   }, [isProcessingOpen, isUploadOpen])
 
   useEffect(() => {
+    return () => {
+      activeSpeechAudioRef.current?.pause?.()
+      activeSpeechAudioRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    stopSpeechPlayback()
+    setSpeechError('')
+  }, [activeExtractionId, currentPageIndex, showOriginalText])
+
+  useEffect(() => {
     const accessToken = authSession?.accessToken ?? ''
 
     if (!accessToken) {
@@ -245,6 +361,11 @@ function App() {
     setIsUploadOpen(true)
   }
 
+  function openDashboardUpload() {
+    navigateTo('/dashboard')
+    setIsUploadOpen(true)
+  }
+
   function closeUploadModal() {
     setIsUploadOpen(false)
   }
@@ -263,7 +384,13 @@ function App() {
     setProcessingStep('uploading')
     setProcessingError('')
     setTranslatedText('')
+    setTranslatedPages([])
+    setTranslationCache({})
+    setTranslatedPageCache({})
     setOriginalText(originalSampleText)
+    setExtractionPages([])
+    setActiveDocumentName(selectedFile.name)
+    setCurrentPageIndex(0)
     setShowOriginalText(false)
     setOriginalSearch('')
     setChatMessages([
@@ -294,8 +421,16 @@ function App() {
       }
 
       setActiveExtractionId(translationResponse.extractionRecord.id)
+      setExtractionPages(translationResponse.extraction.pages)
       setOriginalText(translationResponse.extraction.content || originalSampleText)
       setTranslatedText(translationResponse.translation.translatedText)
+      setTranslatedPages(translationResponse.translation.translatedPages)
+      setTranslationCache({
+        [translationResponse.translation.targetLanguage]: translationResponse.translation.translatedText,
+      })
+      setTranslatedPageCache({
+        [translationResponse.translation.targetLanguage]: translationResponse.translation.translatedPages,
+      })
       setProcessingStep('done')
       setDocuments((current) => [
         mapUploadedDocument({
@@ -322,10 +457,46 @@ function App() {
   }
 
   function closeReader() {
+    stopSpeechPlayback()
     setIsReaderOpen(false)
   }
 
-  function handleAskDocument() {
+  async function handleViewStoredDocument(documentId: string) {
+    if (!authSession?.accessToken) return
+
+    setDocumentsError('')
+
+    try {
+      const response = await getLatestDocumentView(authSession.accessToken, documentId)
+      setActiveExtractionId(response.extractionRecord.id)
+      setActiveDocumentName(response.document.originalName)
+      setSelectedFile(null)
+      setSelectedLanguage(response.translation?.targetLanguage ?? outputLanguages[0])
+      setExtractionPages(response.extraction.pages)
+      setOriginalText(response.extraction.content || originalSampleText)
+      setTranslatedText(response.translation?.translatedText ?? '')
+      setTranslatedPages(response.translation?.translatedPages ?? [])
+      setCurrentPageIndex(0)
+      setTranslationCache(buildTranslationCache(response))
+      setTranslatedPageCache(buildTranslatedPageCache(response))
+      setShowOriginalText(false)
+      setOriginalSearch('')
+      setIsReaderOpen(true)
+      setIsChatOpen(false)
+      setChatInput('')
+      setChatMessages([
+        {
+          id: 1,
+          role: 'assistant',
+          text: 'Ask anything about the uploaded PDF and I will answer from the translated document context.',
+        },
+      ])
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : 'Unable to open this document.')
+    }
+  }
+
+  async function handleAskDocument() {
     const trimmedInput = chatInput.trim()
     if (!trimmedInput) return
 
@@ -333,13 +504,49 @@ function App() {
     setChatMessages((current) => [
       ...current,
       { id: nextId, role: 'user', text: trimmedInput },
-      {
-        id: nextId + 1,
-        role: 'assistant',
-        text: `Based on the uploaded PDF, the key point is: ${translatedText || originalSampleText}`,
-      },
     ])
     setChatInput('')
+
+    if (!authSession?.accessToken || !activeExtractionId) {
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: nextId + 1,
+          role: 'assistant',
+          text: 'Open a processed document first to ask questions about it.',
+        },
+      ])
+      return
+    }
+
+    setIsChatLoading(true)
+
+    try {
+      const response = await chatWithDocument(authSession.accessToken, activeExtractionId, {
+        question: trimmedInput,
+        targetLanguage: selectedLanguage,
+      })
+
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: nextId + 1,
+          role: 'assistant',
+          text: response.answer,
+        },
+      ])
+    } catch (error) {
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: nextId + 1,
+          role: 'assistant',
+          text: error instanceof Error ? error.message : 'Unable to answer from this document right now.',
+        },
+      ])
+    } finally {
+      setIsChatLoading(false)
+    }
   }
 
   function navigateTo(nextPath: '/' | '/signin' | '/signup' | '/dashboard') {
@@ -349,6 +556,103 @@ function App() {
 
     setPathname(nextPath)
     setIsUploadOpen(false)
+  }
+
+  function handleLogout() {
+    stopSpeechPlayback()
+    setAuthSession(null)
+    setAuthUser(null)
+    setDocuments([])
+    setDocumentsError('')
+    setSelectedFile(null)
+    setActiveDocumentName('Translated document')
+    setTranslatedText('')
+    setTranslatedPages([])
+    setTranslationCache({})
+    setTranslatedPageCache({})
+    setOriginalText(originalSampleText)
+    setExtractionPages([])
+    setActiveExtractionId(null)
+    setCurrentPageIndex(0)
+    setIsReaderOpen(false)
+    setIsUploadOpen(false)
+    setIsProcessingOpen(false)
+    setIsChatOpen(false)
+    setChatInput('')
+    setShowOriginalText(false)
+    setOriginalSearch('')
+    setSignInPassword('')
+    navigateTo('/signin')
+  }
+
+  function stopSpeechPlayback() {
+    const currentAudio = activeSpeechAudioRef.current
+    if (!currentAudio) {
+      setIsSpeaking(false)
+      return
+    }
+
+    currentAudio.pause?.()
+    if (typeof currentAudio.currentTime === 'number') {
+      currentAudio.currentTime = 0
+    }
+
+    activeSpeechAudioRef.current = null
+    setIsSpeaking(false)
+  }
+
+  async function handleTextToSpeech() {
+    const textToSpeak = getSpeakableText(currentReaderPage)
+
+    if (isSpeaking) {
+      stopSpeechPlayback()
+      setSpeechError('')
+      return
+    }
+
+    if (!textToSpeak) {
+      setSpeechError('No readable text is available on this page yet.')
+      return
+    }
+
+    if (!window.puter?.ai?.txt2speech) {
+      setSpeechError('PuterJS speech is unavailable right now. Refresh and try again.')
+      return
+    }
+
+    setIsSpeechLoading(true)
+    setSpeechError('')
+
+    try {
+      stopSpeechPlayback()
+
+      const speechConfig = getSpeechConfig()
+      const audio = await window.puter.ai.txt2speech(textToSpeak, speechConfig)
+      activeSpeechAudioRef.current = audio
+      setIsSpeaking(true)
+
+      audio.onended = () => {
+        activeSpeechAudioRef.current = null
+        setIsSpeaking(false)
+      }
+
+      audio.onpause = () => {
+        if (!activeSpeechAudioRef.current) {
+          return
+        }
+
+        activeSpeechAudioRef.current = null
+        setIsSpeaking(false)
+      }
+
+      await audio.play()
+    } catch (error) {
+      activeSpeechAudioRef.current = null
+      setIsSpeaking(false)
+      setSpeechError(error instanceof Error ? error.message : 'Unable to generate speech for this page.')
+    } finally {
+      setIsSpeechLoading(false)
+    }
   }
 
   function applyAuthResponse(response: AuthResponse) {
@@ -361,8 +665,7 @@ function App() {
       refreshToken: response.session.refresh_token,
     })
     setAuthUser({
-      id: response.user.id,
-      email: response.user.email,
+      ...mapAuthUser(response),
     })
   }
 
@@ -392,18 +695,60 @@ function App() {
   }
 
   async function handleReaderLanguageChange(nextLanguage: string) {
+    stopSpeechPlayback()
+    setSpeechError('')
     setSelectedLanguage(nextLanguage)
 
     if (!authSession?.accessToken || !activeExtractionId) {
       setTranslatedText(translatedSamples[nextLanguage] ?? translatedSamples.Hindi)
+      setTranslatedPages([])
       return
     }
 
     setIsReaderLanguageLoading(true)
+    setDocumentsError('')
 
     try {
+      const cachedTranslation = translationCache[nextLanguage]
+      const cachedPages = translatedPageCache[nextLanguage]
+      if (cachedTranslation) {
+        setTranslatedText(cachedTranslation)
+        setTranslatedPages(cachedPages ?? [])
+        return
+      }
+
+      const storedTranslations = await listExtractionTranslations(authSession.accessToken, activeExtractionId)
+      const existingTranslation = storedTranslations.translations.find(
+        (translation) => translation.target_language === nextLanguage
+      )
+
+      if (existingTranslation) {
+        setTranslatedText(existingTranslation.translated_text)
+        setTranslatedPages(existingTranslation.translated_pages ?? [])
+        setTranslationCache((current) => ({
+          ...current,
+          [nextLanguage]: existingTranslation.translated_text,
+        }))
+        setTranslatedPageCache((current) => ({
+          ...current,
+          [nextLanguage]: existingTranslation.translated_pages ?? [],
+        }))
+        setCurrentPageIndex(0)
+        return
+      }
+
       const response = await translateExtraction(authSession.accessToken, activeExtractionId, nextLanguage)
       setTranslatedText(response.translation.translatedText)
+      setTranslatedPages(response.translation.translatedPages)
+      setTranslationCache((current) => ({
+        ...current,
+        [nextLanguage]: response.translation.translatedText,
+      }))
+      setTranslatedPageCache((current) => ({
+        ...current,
+        [nextLanguage]: response.translation.translatedPages,
+      }))
+      setCurrentPageIndex(0)
     } catch (error) {
       setDocumentsError(error instanceof Error ? error.message : 'Unable to translate into the selected language.')
     } finally {
@@ -432,22 +777,43 @@ function App() {
               Access the ecosystem of scientific precision and linguistic mastery.
             </p>
             <ConnectionStatus status={healthStatus} message={healthMessage} />
+            <GatewayWorkspaceSummary
+              authUserEmail={authUser?.email ?? null}
+              documentCount={documents.length}
+              isAuthenticated={isAuthenticated}
+              isLoadingDocuments={isLoadingDocuments}
+              latestDocumentTitle={latestDocument?.title ?? null}
+            />
 
             <div className="gateway-actions">
               <button
                 className="gateway-button gateway-button--primary"
                 type="button"
-                onClick={() => navigateTo('/signin')}
+                onClick={() => {
+                  if (isAuthenticated) {
+                    navigateTo('/dashboard')
+                    return
+                  }
+
+                  navigateTo('/signin')
+                }}
               >
-                Sign In
+                {isAuthenticated ? 'Open Workspace' : 'Sign In'}
                 <LoginIcon />
               </button>
               <button
                 className="gateway-button gateway-button--secondary"
                 type="button"
-                onClick={() => navigateTo('/signup')}
+                onClick={() => {
+                  if (isAuthenticated) {
+                    openDashboardUpload()
+                    return
+                  }
+
+                  navigateTo('/signup')
+                }}
               >
-                Create Account
+                {isAuthenticated ? 'Upload Document' : 'Create Account'}
                 <ArrowRightIcon />
               </button>
             </div>
@@ -569,12 +935,16 @@ function App() {
               <span className="icon-button__dot" />
             </button>
 
+            <button className="logout-button" type="button" onClick={handleLogout}>
+              Logout
+            </button>
+
             <div className="profile-chip">
               <div className="profile-chip__avatar" aria-hidden="true">
-                SJ
+                {getInitials(authUser?.fullName ?? authUser?.email ?? 'User')}
               </div>
               <div>
-                <p className="profile-chip__name">{authUser?.email ?? 'Signed-in user'}</p>
+                <p className="profile-chip__name">{authUser?.fullName ?? 'Signed-in user'}</p>
                 <p className="profile-chip__role">Localization Program Lead</p>
               </div>
             </div>
@@ -608,10 +978,22 @@ function App() {
                   </select>
                   <ChevronDownIcon />
                 </label>
+                {isReaderLanguageLoading ? (
+                  <p className="reader-language-status">Loading {selectedLanguage} translation...</p>
+                ) : null}
 
-                <button className="reader-button reader-button--primary" type="button">
+                {speechError ? <p className="reader-language-status reader-language-status--error">{speechError}</p> : null}
+
+                <button
+                  className="reader-button reader-button--primary"
+                  type="button"
+                  disabled={isSpeechLoading || isReaderLanguageLoading}
+                  onClick={() => {
+                    void handleTextToSpeech()
+                  }}
+                >
                   <VolumeIcon />
-                  Text to Speech
+                  {isSpeechLoading ? 'Preparing audio...' : isSpeaking ? 'Stop audio' : 'Text to Speech'}
                 </button>
               </div>
             </div>
@@ -620,7 +1002,7 @@ function App() {
               <div className="reader-card__header">
                 <div>
                   <p className="eyebrow">{showOriginalText ? 'Original Output' : 'Translated Output'}</p>
-                  <h2>{selectedFile?.name ?? 'Translated document'}</h2>
+                  <h2>{activeDocumentName}</h2>
                 </div>
 
                 <button
@@ -629,6 +1011,7 @@ function App() {
                   onClick={() => {
                     setShowOriginalText((current) => !current)
                     setOriginalSearch('')
+                    setCurrentPageIndex(0)
                   }}
                 >
                   {showOriginalText ? 'View translated output' : 'View original output'}
@@ -638,11 +1021,46 @@ function App() {
               <article className="reader-content">
                 <p>
                   {showOriginalText
-                    ? renderHighlightedText(originalText, originalSearch)
-                    : translatedText}
+                    ? renderHighlightedText(currentReaderPage, originalSearch)
+                    : currentReaderPage}
                 </p>
               </article>
+
+              <div className="reader-pagination">
+                <button
+                  className="reader-page-button"
+                  type="button"
+                  aria-label="Previous page"
+                  disabled={safePageIndex === 0}
+                  onClick={() => setCurrentPageIndex((current) => Math.max(current - 1, 0))}
+                >
+                  <ArrowLeftIcon />
+                </button>
+                <p className="reader-pagination__meta">
+                  Page {safePageIndex + 1} of {Math.max(readerPages.length, 1)}
+                </p>
+                <button
+                  className="reader-page-button"
+                  type="button"
+                  aria-label="Next page"
+                  disabled={safePageIndex >= readerPages.length - 1}
+                  onClick={() =>
+                    setCurrentPageIndex((current) => Math.min(current + 1, readerPages.length - 1))
+                  }
+                >
+                  <ArrowRightIcon />
+                </button>
+              </div>
             </div>
+
+            {isReaderLanguageLoading ? (
+              <div className="reader-loading-overlay" role="status" aria-live="polite">
+                <div className="reader-loading-overlay__card">
+                  <div className="reader-loading-overlay__spinner" aria-hidden="true" />
+                  <p>Loading {selectedLanguage} translation...</p>
+                </div>
+              </div>
+            ) : null}
 
             <div className="reader-chat-fab">
               {isChatOpen ? (
@@ -669,11 +1087,18 @@ function App() {
                     <input
                       type="text"
                       placeholder="Ask the LLM about this PDF..."
+                      disabled={isChatLoading}
                       value={chatInput}
                       onChange={(event) => setChatInput(event.target.value)}
                     />
-                    <button type="button" onClick={handleAskDocument}>
-                      Ask
+                    <button
+                      type="button"
+                      disabled={isChatLoading || !chatInput.trim()}
+                      onClick={() => {
+                        void handleAskDocument()
+                      }}
+                    >
+                      {isChatLoading ? 'Thinking...' : 'Ask'}
                     </button>
                   </div>
                 </section>
@@ -689,10 +1114,7 @@ function App() {
           <>
             <section className="page-intro">
               <p className="eyebrow">Dashboard</p>
-              <h1>Welcome back, Sarah</h1>
-              <p className="page-intro__text">
-                Signed in as {authUser?.email ?? 'your LabLingo account'}.
-              </p>
+              <h1>Welcome back, {authUser?.fullName ?? 'Name'}</h1>
               <p className="page-intro__text">
                 Your regional lab translation workspace is ready. Review active
                 translation jobs, upload new technical documents, and continue where
@@ -739,19 +1161,16 @@ function App() {
                     <p>{document.date}</p>
 
                     <div className="document-card__actions">
-                      <button className="small-button small-button--muted" type="button">
+                      <button
+                        className="small-button small-button--muted"
+                        type="button"
+                        onClick={() => {
+                          void handleViewStoredDocument(document.id)
+                        }}
+                      >
                         View
                       </button>
                     </div>
-
-                    {document.progress ? (
-                      <div className="progress progress--subtle" aria-label="Processing progress">
-                        <div
-                          className="progress__bar"
-                          style={{ width: `${document.progress}%` }}
-                        />
-                      </div>
-                    ) : null}
                   </article>
                 ))}
 
@@ -1059,6 +1478,7 @@ function SignUpPage({
 
   async function handleSubmit() {
     const trimmedEmail = email.trim()
+    const trimmedName = name.trim()
 
     if (!trimmedEmail || !password) {
       setErrorMessage('Email and password are required.')
@@ -1076,6 +1496,8 @@ function SignUpPage({
     try {
       const response = await signUp({
         email: trimmedEmail,
+        languagesKnown: knownLanguages,
+        name: trimmedName,
         password,
       })
 
@@ -1086,8 +1508,7 @@ function SignUpPage({
             refreshToken: response.session.refresh_token,
           },
           user: {
-            id: response.user.id,
-            email: response.user.email,
+            ...mapAuthUser(response),
           },
         })
         return
@@ -1220,6 +1641,201 @@ function ConnectionStatus({
       <p>{message}</p>
     </div>
   )
+}
+
+function GatewayWorkspaceSummary({
+  authUserEmail,
+  documentCount,
+  isAuthenticated,
+  isLoadingDocuments,
+  latestDocumentTitle,
+}: {
+  authUserEmail: string | null
+  documentCount: number
+  isAuthenticated: boolean
+  isLoadingDocuments: boolean
+  latestDocumentTitle: string | null
+}) {
+  return (
+    <section className="gateway-summary" aria-label="Workspace status">
+      <article className="gateway-summary__card">
+        <p className="gateway-summary__label">Account</p>
+        <strong>{isAuthenticated ? 'Connected' : 'Not signed in'}</strong>
+        <span>{isAuthenticated ? authUserEmail : 'Sign in to access your workspace'}</span>
+      </article>
+
+      <article className="gateway-summary__card">
+        <p className="gateway-summary__label">Documents</p>
+        <strong>{isLoadingDocuments ? 'Loading...' : String(documentCount)}</strong>
+        <span>
+          {isAuthenticated
+            ? documentCount
+              ? 'Files ready in your workspace'
+              : 'Your workspace is ready for the first upload'
+            : 'Recent translations appear after sign in'}
+        </span>
+      </article>
+
+      <article className="gateway-summary__card">
+        <p className="gateway-summary__label">Latest</p>
+        <strong>{latestDocumentTitle ?? 'No documents yet'}</strong>
+        <span>
+          {latestDocumentTitle
+            ? 'Most recent translated file'
+            : 'Upload a document to start extraction and translation'}
+        </span>
+      </article>
+    </section>
+  )
+}
+
+function getUserDisplayName(
+  user:
+    | {
+        email: string | null
+        user_metadata?: {
+          full_name?: string
+          name?: string
+        } | null
+      }
+    | null
+    | undefined
+) {
+  const fullName = user?.user_metadata?.full_name?.trim()
+  if (fullName) return fullName
+
+  const fallbackName = user?.user_metadata?.name?.trim()
+  if (fallbackName) return fallbackName
+
+  return null
+}
+
+function getInitials(value: string) {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (!parts.length) {
+    return 'U'
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
+function buildTranslationCache(response: {
+  translation: {
+    targetLanguage: string
+    translatedText: string
+  } | null
+  translationHistory?: Array<{
+    target_language?: string
+    translated_text?: string
+    targetLanguage?: string
+    translatedText?: string
+  }>
+}) {
+  const cache: Record<string, string> = {}
+
+  if (response.translation?.targetLanguage && response.translation.translatedText) {
+    cache[response.translation.targetLanguage] = response.translation.translatedText
+  }
+
+  for (const item of response.translationHistory ?? []) {
+    const language = item.targetLanguage ?? item.target_language
+    const text = item.translatedText ?? item.translated_text
+
+    if (language && text && !cache[language]) {
+      cache[language] = text
+    }
+  }
+
+  return cache
+}
+
+function getSpeakableText(content: string) {
+  return content.replace(/\s+/g, ' ').trim().slice(0, speechTextLimit)
+}
+
+function getSpeechConfig() {
+  return {
+    provider: 'elevenlabs',
+    model: 'eleven_multilingual_v2',
+    voice: '21m00Tcm4TlvDq8ikWAM',
+  }
+}
+
+function buildTranslatedPageCache(response: {
+  translation: {
+    targetLanguage: string
+    translatedPages?: TranslatedPage[]
+  } | null
+  translationHistory?: Array<{
+    target_language?: string
+    targetLanguage?: string
+    translated_pages?: TranslatedPage[]
+  }>
+}) {
+  const cache: Record<string, TranslatedPage[]> = {}
+
+  if (response.translation?.targetLanguage) {
+    cache[response.translation.targetLanguage] = response.translation.translatedPages ?? []
+  }
+
+  for (const item of response.translationHistory ?? []) {
+    const language = item.targetLanguage ?? item.target_language
+    if (language && !cache[language]) {
+      cache[language] = Array.isArray(item.translated_pages) ? item.translated_pages : []
+    }
+  }
+
+  return cache
+}
+
+function buildReaderPages({
+  extractionPages,
+  originalText,
+  showOriginalText,
+  translatedPages,
+  translatedText,
+}: {
+  extractionPages: ExtractionPage[]
+  originalText: string
+  showOriginalText: boolean
+  translatedPages: TranslatedPage[]
+  translatedText: string
+}) {
+  if (!extractionPages.length) {
+    return [showOriginalText ? originalText : translatedText]
+  }
+
+  if (showOriginalText) {
+    return extractionPages.map((page) => page.lines.join('\n').trim() || originalText)
+  }
+
+  if (translatedPages.length) {
+    return translatedPages.map((page) => page.translatedText || translatedText)
+  }
+
+  const translatedParagraphs = translatedText
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (!translatedParagraphs.length) {
+    return [translatedText]
+  }
+
+  const chunkSize = Math.max(1, Math.ceil(translatedParagraphs.length / extractionPages.length))
+  const pages = extractionPages.map((_, index) => {
+    const chunk = translatedParagraphs.slice(index * chunkSize, (index + 1) * chunkSize).join('\n\n')
+    return chunk || translatedText
+  })
+
+  return pages.length ? pages : [translatedText]
 }
 
 function mapUploadedDocument(document: UploadedDocument): DocumentItem {

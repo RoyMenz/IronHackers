@@ -3,11 +3,13 @@ const express = require('express');
 const env = require('../config/env');
 const { getAuthClient } = require('../lib/supabase');
 const { getAdminClient } = require('../lib/supabase');
+const { getUserProfileById, upsertUserProfile } = require('../lib/userProfiles');
+const { requireAuth } = require('../middleware/auth.middleware');
 
 const router = express.Router();
 
 function validateEmailPassword(req, res) {
-  const { email, password } = req.body || {};
+  const { email, password, name, languagesKnown } = req.body || {};
 
   if (!email || !password) {
     res.status(400).json({ error: 'email and password are required' });
@@ -24,7 +26,24 @@ function validateEmailPassword(req, res) {
     return null;
   }
 
-  return { email, password };
+  if (languagesKnown != null && !Array.isArray(languagesKnown)) {
+    res.status(400).json({ error: 'languagesKnown must be an array of strings' });
+    return null;
+  }
+
+  const normalizedLanguagesKnown = Array.isArray(languagesKnown)
+    ? languagesKnown
+        .filter((language) => typeof language === 'string')
+        .map((language) => language.trim())
+        .filter(Boolean)
+    : [];
+
+  return {
+    email,
+    password,
+    languagesKnown: normalizedLanguagesKnown,
+    name: typeof name === 'string' ? name.trim() : '',
+  };
 }
 
 function isEmailRateLimitError(error) {
@@ -37,6 +56,7 @@ async function createConfirmedUserAndSession(payload) {
     email: payload.email,
     password: payload.password,
     email_confirm: true,
+    user_metadata: payload.name ? { full_name: payload.name } : undefined,
   });
 
   if (createError) {
@@ -56,6 +76,30 @@ async function createConfirmedUserAndSession(payload) {
   };
 }
 
+async function saveProfileForUser(user, payload) {
+  if (!user?.id) {
+    return null;
+  }
+
+  return upsertUserProfile({
+    id: user.id,
+    fullName: payload.name,
+    languagesKnown: payload.languagesKnown,
+    organizationEmail: payload.email,
+  });
+}
+
+async function buildAuthResponse({ message, session, user }) {
+  const profile = user?.id ? await getUserProfileById(user.id) : null;
+
+  return {
+    message,
+    profile,
+    session,
+    user,
+  };
+}
+
 router.post('/signup', async (req, res, next) => {
   try {
     const payload = validateEmailPassword(req, res);
@@ -64,17 +108,31 @@ router.post('/signup', async (req, res, next) => {
     }
 
     const supabaseAuth = getAuthClient();
-    const { data, error } = await supabaseAuth.auth.signUp(payload);
+    const signUpPayload = {
+      email: payload.email,
+      password: payload.password,
+      options: payload.name
+        ? {
+            data: {
+              full_name: payload.name,
+            },
+          }
+        : undefined,
+    };
+    const { data, error } = await supabaseAuth.auth.signUp(signUpPayload);
 
     if (error) {
       if (env.allowDevAutoConfirmSignup && isEmailRateLimitError(error)) {
         try {
           const fallback = await createConfirmedUserAndSession(payload);
-          res.status(201).json({
-            message: 'Signup successful',
-            user: fallback.user,
-            session: fallback.session,
-          });
+          await saveProfileForUser(fallback.user, payload);
+          res.status(201).json(
+            await buildAuthResponse({
+              message: 'Signup successful',
+              session: fallback.session,
+              user: fallback.user,
+            })
+          );
           return;
         } catch (fallbackError) {
           res.status(400).json({ error: fallbackError.message });
@@ -86,11 +144,15 @@ router.post('/signup', async (req, res, next) => {
       return;
     }
 
-    res.status(201).json({
-      message: 'Signup successful',
-      user: data.user,
-      session: data.session,
-    });
+    await saveProfileForUser(data.user, payload);
+
+    res.status(201).json(
+      await buildAuthResponse({
+        message: 'Signup successful',
+        session: data.session,
+        user: data.user,
+      })
+    );
   } catch (error) {
     next(error);
   }
@@ -104,18 +166,37 @@ router.post('/signin', async (req, res, next) => {
     }
 
     const supabaseAuth = getAuthClient();
-    const { data, error } = await supabaseAuth.auth.signInWithPassword(payload);
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
+      email: payload.email,
+      password: payload.password,
+    });
 
     if (error) {
       res.status(401).json({ error: error.message });
       return;
     }
 
-    res.status(200).json({
-      message: 'Signin successful',
-      user: data.user,
-      session: data.session,
-    });
+    res.status(200).json(
+      await buildAuthResponse({
+        message: 'Signin successful',
+        session: data.session,
+        user: data.user,
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/me', requireAuth, async (_req, res, next) => {
+  try {
+    res.status(200).json(
+      await buildAuthResponse({
+        message: 'Current user loaded successfully',
+        session: null,
+        user: _req.user,
+      })
+    );
   } catch (error) {
     next(error);
   }

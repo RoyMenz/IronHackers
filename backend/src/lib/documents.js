@@ -115,6 +115,24 @@ async function getDocumentExtractionByIdForUser({ userId, extractionId }) {
   return data;
 }
 
+async function getLatestDocumentExtractionByDocumentForUser({ userId, documentId }) {
+  const supabase = getAdminClient();
+  const { data, error } = await supabase
+    .from(EXTRACTIONS_TABLE)
+    .select('*')
+    .eq('user_id', userId)
+    .eq('document_id', documentId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load latest extraction: ${error.message}`);
+  }
+
+  return data;
+}
+
 function getTranslationHistory(llmPayload) {
   if (!llmPayload || typeof llmPayload !== 'object') {
     return [];
@@ -216,6 +234,7 @@ module.exports = {
   getDocumentByIdForUser,
   createDocumentExtractionRecord,
   getDocumentExtractionByIdForUser,
+  getLatestDocumentExtractionByDocumentForUser,
   createDocumentTranslationRecord,
   listDocumentTranslationsByExtractionForUser,
   appendTranslationToExtraction,

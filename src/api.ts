@@ -39,14 +39,30 @@ export function getHealthStatus() {
 
 export type AuthPayload = {
   email: string
+  languagesKnown?: string[]
+  name?: string
   password: string
+}
+
+export type UserProfile = {
+  id: string
+  full_name: string | null
+  organization_email: string | null
+  organization_name?: string | null
+  languages_known: string[]
+  role?: string | null
 }
 
 export type AuthResponse = {
   message: string
+  profile: UserProfile | null
   user: {
     id: string
     email: string | null
+    user_metadata?: {
+      full_name?: string
+      name?: string
+    } | null
   } | null
   session: {
     access_token: string
@@ -74,6 +90,13 @@ export function signIn(payload: AuthPayload) {
   })
 }
 
+export function getCurrentUser(token: string) {
+  return authorizedRequest<AuthResponse>('/api/auth/me', {
+    method: 'GET',
+    token,
+  })
+}
+
 export type UploadedDocument = {
   id: string
   original_name?: string
@@ -82,6 +105,12 @@ export type UploadedDocument = {
   mimeType?: string
   created_at?: string
   createdAt?: string
+}
+
+export type ChatDocumentResponse = {
+  answer: string
+  extractionId: string
+  targetLanguage: string
 }
 
 export type UploadDocumentResponse = {
@@ -122,11 +151,58 @@ export type ExtractAndTranslateResponse = {
     model: string
     targetLanguage: string
     translatedText: string
+    translatedPages: Array<{
+      pageNumber: number
+      translatedText: string
+    }>
   }
   extractionRecord: {
     id: string
     createdAt: string
   }
+}
+
+export type StoredDocumentViewResponse = {
+  document: {
+    id: string
+    originalName: string
+    createdAt: string
+  }
+  extractionRecord: {
+    id: string
+    createdAt: string
+    documentId: string
+    modelId: string
+  }
+  extraction: {
+    content: string
+    pages: Array<{
+      pageNumber: number
+      lines: string[]
+    }>
+    keyValuePairs: Array<{
+      key: string
+      value: string
+    }>
+  }
+  translation: {
+    provider: string
+    model: string
+    targetLanguage: string
+    translatedText: string
+    translatedPages: Array<{
+      pageNumber: number
+      translatedText: string
+    }>
+  } | null
+  translationHistory: Array<{
+    provider?: string
+    model?: string
+    target_language?: string
+    translated_text?: string
+    targetLanguage?: string
+    translatedText?: string
+  }>
 }
 
 type AuthorizedOptions = RequestOptions & {
@@ -191,4 +267,47 @@ export function translateExtraction(token: string, extractionId: string, targetL
       token,
     }
   )
+}
+
+export function getLatestDocumentView(token: string, documentId: string) {
+  return authorizedRequest<StoredDocumentViewResponse>(`/api/documents/${documentId}/latest-view`, {
+    method: 'GET',
+    token,
+  })
+}
+
+export function chatWithDocument(
+  token: string,
+  extractionId: string,
+  payload: { question: string; targetLanguage: string }
+) {
+  return authorizedRequest<ChatDocumentResponse>(`/api/documents/extractions/${extractionId}/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    token,
+  })
+}
+
+export function listExtractionTranslations(token: string, extractionId: string) {
+  return authorizedRequest<{
+    extractionId: string
+    translations: Array<{
+      id: string
+      provider: string
+      model: string
+      target_language: string
+      translated_text: string
+      translated_pages: Array<{
+        pageNumber: number
+        translatedText: string
+      }>
+      created_at: string
+    }>
+  }>(`/api/documents/extractions/${extractionId}/translations`, {
+    method: 'GET',
+    token,
+  })
 }
