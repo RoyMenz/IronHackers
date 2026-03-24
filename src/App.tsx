@@ -1,8 +1,20 @@
 //Commiting to check Code Changes
 import { useEffect, useId, useState, type ChangeEvent, type ReactNode } from 'react'
 import './App.css'
+import {
+  extractAndTranslateDocument,
+  getHealthStatus,
+  listDocuments,
+  signIn,
+  signUp,
+  translateExtraction,
+  uploadDocument,
+  type AuthResponse,
+  type UploadedDocument,
+} from './api'
 
 type DocumentItem = {
+  id: string
   title: string
   date: string
   status: 'Completed' | 'Processing'
@@ -16,27 +28,15 @@ type ChatMessage = {
   text: string
 }
 
-const recentDocuments: DocumentItem[] = [
-  {
-    title: 'Regional Lab Workflow Guide.pdf',
-    date: 'October 12, 2024',
-    status: 'Completed',
-    kind: 'report',
-  },
-  {
-    title: 'Sample Collection SOP - Hindi.md',
-    date: 'October 14, 2024',
-    status: 'Processing',
-    kind: 'markdown',
-    progress: 65,
-  },
-  {
-    title: 'Equipment Calibration Manual - Tamil.pdf',
-    date: 'October 10, 2024',
-    status: 'Completed',
-    kind: 'compliance',
-  },
-]
+type AuthUser = {
+  id: string
+  email: string | null
+}
+
+type AuthSession = {
+  accessToken: string
+  refreshToken: string | null
+}
 
 const outputLanguages = ['Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
 const authLanguages = ['English', 'Hindi', 'Tamil', 'Bengali', 'Telugu', 'Marathi']
@@ -54,15 +54,68 @@ const translatedSamples: Record<string, string> = {
 }
 const originalSampleText =
   'This document outlines sample intake, reagent preparation, cold-chain handling, and emergency escalation procedures for regional lab operators. Preserve technical terminology, dosage instructions, and sequence-critical actions during translation.'
+const authStorageKey = 'lablingo-auth-session'
+
+function readStoredAuth() {
+  if (typeof window === 'undefined') {
+    return {
+      session: null as AuthSession | null,
+      user: null as AuthUser | null,
+    }
+  }
+
+  const storedValue = window.localStorage.getItem(authStorageKey)
+  if (!storedValue) {
+    return {
+      session: null as AuthSession | null,
+      user: null as AuthUser | null,
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue) as {
+      session?: AuthSession
+      user?: AuthUser
+    }
+
+    return {
+      session: parsed.session ?? null,
+      user: parsed.user ?? null,
+    }
+  } catch {
+    window.localStorage.removeItem(authStorageKey)
+    return {
+      session: null as AuthSession | null,
+      user: null as AuthUser | null,
+    }
+  }
+}
 
 function App() {
+  const storedAuth = readStoredAuth()
   const [pathname, setPathname] = useState(() => window.location.pathname)
+  const [healthStatus, setHealthStatus] = useState<'checking' | 'connected' | 'error'>('checking')
+  const [healthMessage, setHealthMessage] = useState('Checking backend connection...')
+  const [authSession, setAuthSession] = useState<AuthSession | null>(storedAuth.session)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(storedAuth.user)
+  const [signInEmail, setSignInEmail] = useState('')
+  const [signInPassword, setSignInPassword] = useState('')
+  const [signInError, setSignInError] = useState('')
+  const [signInNotice, setSignInNotice] = useState('')
+  const [isSigningIn, setIsSigningIn] = useState(false)
+  const [documents, setDocuments] = useState<DocumentItem[]>([])
+  const [documentsError, setDocumentsError] = useState('')
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const [isProcessingOpen, setIsProcessingOpen] = useState(false)
   const [processingStep, setProcessingStep] = useState<'uploading' | 'extracting' | 'translating' | 'done'>('uploading')
+  const [processingError, setProcessingError] = useState('')
   const [selectedLanguage, setSelectedLanguage] = useState(outputLanguages[0])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [translatedText, setTranslatedText] = useState('')
+  const [originalText, setOriginalText] = useState(originalSampleText)
+  const [activeExtractionId, setActiveExtractionId] = useState<string | null>(null)
+  const [isReaderLanguageLoading, setIsReaderLanguageLoading] = useState(false)
   const [isReaderOpen, setIsReaderOpen] = useState(false)
   const [showOriginalText, setShowOriginalText] = useState(false)
   const [originalSearch, setOriginalSearch] = useState('')
@@ -78,6 +131,23 @@ function App() {
   const fileInputId = useId()
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    if (!authSession || !authUser) {
+      window.localStorage.removeItem(authStorageKey)
+      return
+    }
+
+    window.localStorage.setItem(
+      authStorageKey,
+      JSON.stringify({
+        session: authSession,
+        user: authUser,
+      })
+    )
+  }, [authSession, authUser])
+
+  useEffect(() => {
     function handlePopState() {
       setPathname(window.location.pathname)
     }
@@ -86,6 +156,40 @@ function App() {
 
     return () => {
       window.removeEventListener('popstate', handlePopState)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (pathname !== '/dashboard' || authSession) return
+    navigateTo('/signin')
+  }, [authSession, pathname])
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadHealth() {
+      try {
+        const response = await getHealthStatus()
+        if (!isMounted) return
+
+        setHealthStatus(response.status === 'ok' ? 'connected' : 'error')
+        setHealthMessage(
+          response.status === 'ok'
+            ? `Backend connected. Last heartbeat: ${new Date(response.timestamp).toLocaleString()}`
+            : 'Backend responded with an unexpected status.'
+        )
+      } catch (error) {
+        if (!isMounted) return
+
+        setHealthStatus('error')
+        setHealthMessage(error instanceof Error ? error.message : 'Unable to reach the backend.')
+      }
+    }
+
+    loadHealth()
+
+    return () => {
+      isMounted = false
     }
   }, [])
 
@@ -101,46 +205,41 @@ function App() {
   }, [isProcessingOpen, isUploadOpen])
 
   useEffect(() => {
-    if (!isProcessingOpen || processingStep === 'done') return
+    const accessToken = authSession?.accessToken ?? ''
 
-    const steps: Record<'uploading' | 'extracting' | 'translating', number> = {
-      uploading: 900,
-      extracting: 1200,
-      translating: 1800,
+    if (!accessToken) {
+      setDocuments([])
+      return
     }
 
-    const timer = window.setTimeout(() => {
-      if (processingStep === 'uploading') {
-        setProcessingStep('extracting')
-        return
-      }
+    let isMounted = true
 
-      if (processingStep === 'extracting') {
-        setProcessingStep('translating')
-        return
-      }
+    async function loadDocuments() {
+      setIsLoadingDocuments(true)
+      setDocumentsError('')
 
-      setProcessingStep('done')
-      setTranslatedText(translatedSamples[selectedLanguage] ?? translatedSamples.Hindi)
-    }, steps[processingStep])
+      try {
+        const response = await listDocuments(accessToken)
+        if (!isMounted) return
+
+        setDocuments(response.documents.map(mapUploadedDocument))
+      } catch (error) {
+        if (!isMounted) return
+
+        setDocumentsError(error instanceof Error ? error.message : 'Unable to load recent documents.')
+      } finally {
+        if (isMounted) {
+          setIsLoadingDocuments(false)
+        }
+      }
+    }
+
+    loadDocuments()
 
     return () => {
-      window.clearTimeout(timer)
+      isMounted = false
     }
-  }, [isProcessingOpen, processingStep, selectedFile, selectedLanguage])
-
-  useEffect(() => {
-    if (!isProcessingOpen || processingStep !== 'done') return
-
-    const timer = window.setTimeout(() => {
-      setIsProcessingOpen(false)
-      setIsReaderOpen(true)
-    }, 500)
-
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [isProcessingOpen, processingStep])
+  }, [authSession?.accessToken])
 
   function openUploadModal() {
     setIsUploadOpen(true)
@@ -155,15 +254,71 @@ function App() {
     setSelectedFile(nextFile)
   }
 
-  function startTranslation() {
-    if (!selectedFile) return
+  async function startTranslation() {
+    if (!selectedFile || !authSession?.accessToken) return
+
     setIsUploadOpen(false)
     setIsProcessingOpen(true)
     setIsReaderOpen(false)
     setProcessingStep('uploading')
+    setProcessingError('')
     setTranslatedText('')
+    setOriginalText(originalSampleText)
     setShowOriginalText(false)
     setOriginalSearch('')
+    setChatMessages([
+      {
+        id: 1,
+        role: 'assistant',
+        text: 'Ask anything about the uploaded PDF and I will answer from the translated document context.',
+      },
+    ])
+
+    let translatingTimer: number | null = null
+
+    try {
+      const uploadResponse = await uploadDocument(authSession.accessToken, selectedFile)
+
+      setProcessingStep('extracting')
+      translatingTimer = window.setTimeout(() => {
+        setProcessingStep((current) => (current === 'extracting' ? 'translating' : current))
+      }, 900)
+
+      const translationResponse = await extractAndTranslateDocument(
+        authSession.accessToken,
+        uploadResponse.file.id,
+        selectedLanguage
+      )
+      if (translatingTimer) {
+        window.clearTimeout(translatingTimer)
+      }
+
+      setActiveExtractionId(translationResponse.extractionRecord.id)
+      setOriginalText(translationResponse.extraction.content || originalSampleText)
+      setTranslatedText(translationResponse.translation.translatedText)
+      setProcessingStep('done')
+      setDocuments((current) => [
+        mapUploadedDocument({
+          id: uploadResponse.file.id,
+          originalName: uploadResponse.file.originalName,
+          mimeType: uploadResponse.file.mimeType,
+          createdAt: uploadResponse.file.createdAt,
+        }),
+        ...current.filter((document) => document.id !== uploadResponse.file.id),
+      ])
+
+      window.setTimeout(() => {
+        setIsProcessingOpen(false)
+        setIsReaderOpen(true)
+      }, 400)
+    } catch (error) {
+      if (translatingTimer) {
+        window.clearTimeout(translatingTimer)
+      }
+      setProcessingError(error instanceof Error ? error.message : 'Unable to process the selected document.')
+      setIsProcessingOpen(false)
+      setIsUploadOpen(true)
+    }
   }
 
   function closeReader() {
@@ -196,6 +351,66 @@ function App() {
     setIsUploadOpen(false)
   }
 
+  function applyAuthResponse(response: AuthResponse) {
+    if (!response.session?.access_token || !response.user?.id) {
+      throw new Error('Authentication succeeded, but no active session was returned.')
+    }
+
+    setAuthSession({
+      accessToken: response.session.access_token,
+      refreshToken: response.session.refresh_token,
+    })
+    setAuthUser({
+      id: response.user.id,
+      email: response.user.email,
+    })
+  }
+
+  async function handleSignInSubmit() {
+    const email = signInEmail.trim()
+    const password = signInPassword
+
+    if (!email || !password) {
+      setSignInError('Email and password are required.')
+      return
+    }
+
+    setIsSigningIn(true)
+    setSignInError('')
+    setSignInNotice('')
+
+    try {
+      const response = await signIn({ email, password })
+      applyAuthResponse(response)
+      setSignInPassword('')
+      navigateTo('/dashboard')
+    } catch (error) {
+      setSignInError(error instanceof Error ? error.message : 'Unable to sign in.')
+    } finally {
+      setIsSigningIn(false)
+    }
+  }
+
+  async function handleReaderLanguageChange(nextLanguage: string) {
+    setSelectedLanguage(nextLanguage)
+
+    if (!authSession?.accessToken || !activeExtractionId) {
+      setTranslatedText(translatedSamples[nextLanguage] ?? translatedSamples.Hindi)
+      return
+    }
+
+    setIsReaderLanguageLoading(true)
+
+    try {
+      const response = await translateExtraction(authSession.accessToken, activeExtractionId, nextLanguage)
+      setTranslatedText(response.translation.translatedText)
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : 'Unable to translate into the selected language.')
+    } finally {
+      setIsReaderLanguageLoading(false)
+    }
+  }
+
   if (pathname === '/') {
     return (
       <div className="gateway-shell">
@@ -216,6 +431,7 @@ function App() {
             <p className="gateway-hero__text">
               Access the ecosystem of scientific precision and linguistic mastery.
             </p>
+            <ConnectionStatus status={healthStatus} message={healthMessage} />
 
             <div className="gateway-actions">
               <button
@@ -259,21 +475,66 @@ function App() {
         title="Sign in to your workspace."
         footerPrompt="Don't have an account?"
         footerAction="Create one"
-        onFooterAction={() => navigateTo('/signup')}
-        onSubmit={() => navigateTo('/dashboard')}
+        errorMessage={signInError}
+        infoMessage={signInNotice}
+        isSubmitting={isSigningIn}
+        statusMessage={healthMessage}
+        statusState={healthStatus}
+        onFooterAction={() => {
+          setSignInError('')
+          setSignInNotice('')
+          navigateTo('/signup')
+        }}
+        onSubmit={handleSignInSubmit}
       >
         <AuthField label="Organization email">
-          <input type="email" placeholder="name@organization.com" />
+          <input
+            type="email"
+            placeholder="name@organization.com"
+            value={signInEmail}
+            onChange={(event) => {
+              setSignInEmail(event.target.value)
+              if (signInError) setSignInError('')
+              if (signInNotice) setSignInNotice('')
+            }}
+          />
         </AuthField>
         <AuthField label="Password">
-          <input type="password" placeholder="Enter your password" />
+          <input
+            type="password"
+            placeholder="Enter your password"
+            value={signInPassword}
+            onChange={(event) => {
+              setSignInPassword(event.target.value)
+              if (signInError) setSignInError('')
+              if (signInNotice) setSignInNotice('')
+            }}
+          />
         </AuthField>
       </AuthShell>
     )
   }
 
   if (pathname === '/signup') {
-    return <SignUpPage onComplete={() => navigateTo('/dashboard')} onSignIn={() => navigateTo('/signin')} />
+    return (
+      <SignUpPage
+        onAuthenticated={({ session, user }) => {
+          setAuthSession(session)
+          setAuthUser(user)
+          navigateTo('/dashboard')
+        }}
+        onRequireSignIn={(email, message) => {
+          setSignInEmail(email)
+          setSignInPassword('')
+          setSignInError('')
+          setSignInNotice(message)
+          navigateTo('/signin')
+        }}
+        onSignIn={() => navigateTo('/signin')}
+        statusMessage={healthMessage}
+        statusState={healthStatus}
+      />
+    )
   }
 
   return (
@@ -313,7 +574,7 @@ function App() {
                 SJ
               </div>
               <div>
-                <p className="profile-chip__name">Sarah Jenkins</p>
+                <p className="profile-chip__name">{authUser?.email ?? 'Signed-in user'}</p>
                 <p className="profile-chip__role">Localization Program Lead</p>
               </div>
             </div>
@@ -334,10 +595,9 @@ function App() {
                 <label className="reader-language" aria-label="Change translated language">
                   <select
                     value={selectedLanguage}
+                    disabled={isReaderLanguageLoading}
                     onChange={(event) => {
-                      const nextLanguage = event.target.value
-                      setSelectedLanguage(nextLanguage)
-                      setTranslatedText(translatedSamples[nextLanguage] ?? translatedSamples.Hindi)
+                      void handleReaderLanguageChange(event.target.value)
                     }}
                   >
                     {outputLanguages.map((language) => (
@@ -378,7 +638,7 @@ function App() {
               <article className="reader-content">
                 <p>
                   {showOriginalText
-                    ? renderHighlightedText(originalSampleText, originalSearch)
+                    ? renderHighlightedText(originalText, originalSearch)
                     : translatedText}
                 </p>
               </article>
@@ -431,10 +691,15 @@ function App() {
               <p className="eyebrow">Dashboard</p>
               <h1>Welcome back, Sarah</h1>
               <p className="page-intro__text">
+                Signed in as {authUser?.email ?? 'your LabLingo account'}.
+              </p>
+              <p className="page-intro__text">
                 Your regional lab translation workspace is ready. Review active
                 translation jobs, upload new technical documents, and continue where
                 you left off.
               </p>
+              <ConnectionStatus status={healthStatus} message={healthMessage} />
+              {documentsError ? <p className="auth-feedback auth-feedback--error">{documentsError}</p> : null}
             </section>
 
             <section className="overview-grid" aria-label="Overview">
@@ -462,7 +727,7 @@ function App() {
               </div>
 
               <div className="document-grid">
-                {recentDocuments.map((document) => (
+                {documents.map((document) => (
                   <article key={document.title} className="document-card">
                     <div className="document-card__top">
                       <div className={`document-card__icon document-card__icon--${document.kind}`}>
@@ -490,14 +755,16 @@ function App() {
                   </article>
                 ))}
 
-                <article className="document-card document-card--skeleton" aria-hidden="true">
-                  <div className="skeleton skeleton--square" />
-                  <div className="skeleton skeleton--line-lg" />
-                  <div className="skeleton skeleton--line-sm" />
-                  <div className="document-card__actions">
-                    <div className="skeleton skeleton--button" />
-                  </div>
-                </article>
+                {isLoadingDocuments ? (
+                  <article className="document-card document-card--skeleton" aria-hidden="true">
+                    <div className="skeleton skeleton--square" />
+                    <div className="skeleton skeleton--line-lg" />
+                    <div className="skeleton skeleton--line-sm" />
+                    <div className="document-card__actions">
+                      <div className="skeleton skeleton--button" />
+                    </div>
+                  </article>
+                ) : null}
               </div>
             </section>
           </>
@@ -588,11 +855,14 @@ function App() {
             </div>
 
             <div className="upload-modal__footer">
+              {processingError ? <p className="auth-feedback auth-feedback--error">{processingError}</p> : null}
               <button
                 className={`translate-button${selectedFile ? ' translate-button--ready' : ''}`}
                 type="button"
-                disabled={!selectedFile}
-                onClick={startTranslation}
+                disabled={!selectedFile || !authSession?.accessToken}
+                onClick={() => {
+                  void startTranslation()
+                }}
               >
                 Translate
               </button>
@@ -642,7 +912,7 @@ function App() {
                 </div>
                 <p className="status-popup__message">
                   {processingStep === 'uploading'
-                    ? 'Uploading your PDF and preparing it for processing.'
+                    ? 'Uploading your file and preparing it for processing.'
                     : processingStep === 'extracting'
                       ? 'Pulling structured text from the document.'
                       : 'Waiting for the LLM to finish generating translated output.'}
@@ -661,27 +931,37 @@ function App() {
 function AuthShell({
   actionLabel,
   children,
+  errorMessage,
+  infoMessage,
   eyebrow,
   footerAction,
   footerPrompt,
   helperText,
+  isSubmitting,
   onFooterAction,
   onSubmit,
+  statusMessage,
+  statusState,
   title,
 }: {
   actionLabel: string
   children: ReactNode
+  errorMessage?: string
+  infoMessage?: string
   eyebrow: string
   footerAction: string
   footerPrompt: string
   helperText: string
+  isSubmitting?: boolean
   onFooterAction: () => void
-  onSubmit: () => void
+  onSubmit: () => Promise<void> | void
+  statusMessage: string
+  statusState: 'checking' | 'connected' | 'error'
   title: string
 }) {
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    onSubmit()
+    await onSubmit()
   }
 
   return (
@@ -703,11 +983,18 @@ function AuthShell({
             <h1>{title}</h1>
             <p>{helperText}</p>
           </div>
+          <ConnectionStatus status={statusState} message={statusMessage} />
 
           <form className="auth-form" onSubmit={handleSubmit}>
             {children}
-            <button className="gateway-button gateway-button--primary auth-submit" type="submit">
-              {actionLabel}
+            {infoMessage ? <p className="auth-feedback auth-feedback--info">{infoMessage}</p> : null}
+            {errorMessage ? <p className="auth-feedback auth-feedback--error">{errorMessage}</p> : null}
+            <button
+              className="gateway-button gateway-button--primary auth-submit"
+              type="submit"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? `${actionLabel}...` : actionLabel}
               <ArrowRightIcon />
             </button>
           </form>
@@ -740,14 +1027,26 @@ function AuthField({
 }
 
 function SignUpPage({
-  onComplete,
+  onAuthenticated,
+  onRequireSignIn,
   onSignIn,
+  statusMessage,
+  statusState,
 }: {
-  onComplete: () => void
+  onAuthenticated: (payload: { session: AuthSession; user: AuthUser }) => void
+  onRequireSignIn: (email: string, message: string) => void
   onSignIn: () => void
+  statusMessage: string
+  statusState: 'checking' | 'connected' | 'error'
 }) {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [selectedKnownLanguage, setSelectedKnownLanguage] = useState('')
   const [knownLanguages, setKnownLanguages] = useState<string[]>([])
+  const [errorMessage, setErrorMessage] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   function addKnownLanguage(language: string) {
     if (!language || knownLanguages.includes(language)) return
@@ -758,28 +1057,108 @@ function SignUpPage({
     setKnownLanguages((current) => current.filter((item) => item !== language))
   }
 
+  async function handleSubmit() {
+    const trimmedEmail = email.trim()
+
+    if (!trimmedEmail || !password) {
+      setErrorMessage('Email and password are required.')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Passwords do not match.')
+      return
+    }
+
+    setIsSubmitting(true)
+    setErrorMessage('')
+
+    try {
+      const response = await signUp({
+        email: trimmedEmail,
+        password,
+      })
+
+      if (response.session?.access_token && response.user?.id) {
+        onAuthenticated({
+          session: {
+            accessToken: response.session.access_token,
+            refreshToken: response.session.refresh_token,
+          },
+          user: {
+            id: response.user.id,
+            email: response.user.email,
+          },
+        })
+        return
+      }
+
+      onRequireSignIn(
+        trimmedEmail,
+        'Account created. Confirm your email if required, then sign in to continue.'
+      )
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to create your account.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <AuthShell
       actionLabel="Create an account"
+      errorMessage={errorMessage}
       eyebrow="Get Started"
       helperText="Set up your LabLingo access with your organization details and preferred language."
+      isSubmitting={isSubmitting}
       title="Create your account."
       footerPrompt="Already have an account?"
       footerAction="Sign in"
+      statusMessage={statusMessage}
+      statusState={statusState}
       onFooterAction={onSignIn}
-      onSubmit={onComplete}
+      onSubmit={handleSubmit}
     >
       <AuthField label="Name (First and Last)">
-        <input type="text" placeholder="Asha Patel" />
+        <input
+          type="text"
+          placeholder="Asha Patel"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
       </AuthField>
       <AuthField label="Organization email">
-        <input type="email" placeholder="asha@organization.com" />
+        <input
+          type="email"
+          placeholder="asha@organization.com"
+          value={email}
+          onChange={(event) => {
+            setEmail(event.target.value)
+            if (errorMessage) setErrorMessage('')
+          }}
+        />
       </AuthField>
       <AuthField label="Password">
-        <input type="password" placeholder="Create a password" />
+        <input
+          type="password"
+          placeholder="Create a password"
+          value={password}
+          onChange={(event) => {
+            setPassword(event.target.value)
+            if (errorMessage) setErrorMessage('')
+          }}
+        />
       </AuthField>
       <AuthField label="Enter password again">
-        <input type="password" placeholder="Re-enter your password" />
+        <input
+          type="password"
+          placeholder="Re-enter your password"
+          value={confirmPassword}
+          onChange={(event) => {
+            setConfirmPassword(event.target.value)
+            if (errorMessage) setErrorMessage('')
+          }}
+        />
       </AuthField>
       <AuthField label="Languages known">
         <div className="auth-multi-select">
@@ -826,6 +1205,58 @@ function SignUpPage({
       </AuthField>
     </AuthShell>
   )
+}
+
+function ConnectionStatus({
+  message,
+  status,
+}: {
+  message: string
+  status: 'checking' | 'connected' | 'error'
+}) {
+  return (
+    <div className={`connection-status connection-status--${status}`} role="status">
+      <span className="connection-status__dot" aria-hidden="true" />
+      <p>{message}</p>
+    </div>
+  )
+}
+
+function mapUploadedDocument(document: UploadedDocument): DocumentItem {
+  const originalName = document.originalName ?? document.original_name ?? 'Untitled document'
+  const mimeType = document.mimeType ?? document.mime_type ?? ''
+
+  return {
+    id: document.id,
+    title: originalName,
+    date: formatDocumentDate(document.createdAt ?? document.created_at),
+    status: 'Completed',
+    kind: getDocumentKind(mimeType, originalName),
+  }
+}
+
+function formatDocumentDate(value?: string) {
+  if (!value) return 'Recently uploaded'
+
+  return new Date(value).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
+function getDocumentKind(mimeType: string, fileName: string): DocumentItem['kind'] {
+  const lowerName = fileName.toLowerCase()
+
+  if (mimeType.includes('text') || lowerName.endsWith('.md') || lowerName.endsWith('.txt')) {
+    return 'markdown'
+  }
+
+  if (mimeType.includes('image') || lowerName.endsWith('.png') || lowerName.endsWith('.jpg')) {
+    return 'compliance'
+  }
+
+  return 'report'
 }
 
 function renderHighlightedText(content: string, query: string) {
